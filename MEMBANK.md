@@ -9,6 +9,13 @@ Real-time streaming transcription is **profoundly strong**. Words appear instant
 ## GitHub Repo
 https://github.com/alosec/yappatron
 
+## Website
+https://yappatron.pages.dev (Cloudflare Pages, project: `yappatron`)
+
+## TODO (sync from Mac)
+- [ ] Export td tasks from Mac ~/Workspace/yappatron and commit to repo
+- [ ] Push website styling update
+
 ## Architecture (Production)
 ```
 Swift (Yappatron.app)
