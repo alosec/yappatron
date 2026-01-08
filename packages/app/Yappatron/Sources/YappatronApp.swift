@@ -1,6 +1,6 @@
 import SwiftUI
 import HotKey
-import Darwin
+import Combine
 
 @main
 struct YappatronApp: App {
@@ -13,135 +13,178 @@ struct YappatronApp: App {
     }
 }
 
+// MARK: - App Delegate
+
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
-    // UI Components
+    
+    // UI
     var statusItem: NSStatusItem!
     var overlayWindow: OverlayWindow?
     var overlayController: OverlayWindowController?
     
-    // Core components
-    var webSocketClient: WebSocketClient!
-    var audioCapture: AudioCapture!
+    // Core
+    var engine: TranscriptionEngine!
     var inputSimulator: InputSimulator!
-    var engineManager: EngineManager!
-    var settings: AppSettings!
     
     // Hotkeys
-    var undoWordHotKey: HotKey?
-    var undoAllHotKey: HotKey?
     var togglePauseHotKey: HotKey?
     var toggleOverlayHotKey: HotKey?
     
     // State
     @Published var isPaused = false
-    @Published var isSpeaking = false
+    @Published var currentTypedText = "" // What we've typed so far (for backspace corrections)
     
-    // Text buffer - accumulates until sent to input
-    var pendingText = ""
-    var sentText = ""
+    // Settings
+    var pressEnterAfterSpeech = false
     
-    // Context monitoring
-    var contextTimer: Timer?
-    var wasInputFocused = false
+    // Combine
+    private var cancellables = Set<AnyCancellable>()
     
-    // Auto-hide timer
-    var hideTimer: Timer?
+    nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { @MainActor in
+            await self.setup()
+        }
+    }
     
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    func setup() async {
         NSApp.setActivationPolicy(.accessory)
         
-        settings = AppSettings.shared
-        engineManager = EngineManager.shared
         inputSimulator = InputSimulator()
-        audioCapture = AudioCapture()
+        engine = TranscriptionEngine()
         
-        // Request accessibility permission if we don't have it (only prompts once per install)
+        // Request accessibility
         if !InputSimulator.hasAccessibilityPermission() {
             _ = InputSimulator.requestAccessibilityPermissionIfNeeded()
         }
         
         setupStatusItem()
         setupOverlay()
-        setupWebSocket()
-        setupAudioCapture()
         setupHotKeys()
-        startContextMonitoring()
+        setupEngineCallbacks()
+        observeEngineStatus()
         
-        // Check if engine is already running, if not start it
-        if !isEngineRunning() {
-            engineManager.start(model: settings.whisperModel)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                self?.webSocketClient.connect()
-            }
-        } else {
-            webSocketClient.connect()
-        }
+        // Start the engine
+        await engine.start()
         
-        settings.onModelChanged = { [weak self] newModel in
-            self?.engineManager.restart(model: newModel)
+        if case .ready = engine.status {
+            engine.startListening()
         }
     }
     
-    func isEngineRunning() -> Bool {
-        let sock = socket(AF_INET, SOCK_STREAM, 0)
-        defer { close(sock) }
-        
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = UInt16(9876).bigEndian
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-        
-        let result = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+    nonisolated func applicationWillTerminate(_ notification: Notification) {
+        Task { @MainActor in
+            engine.cleanup()
+        }
+    }
+    
+    // MARK: - Engine Setup
+    
+    func setupEngineCallbacks() {
+        // Final transcription (on EOU) - for now just reset, partials handle typing
+        engine.onTranscription = { [weak self] text in
+            Task { @MainActor in
+                self?.handleFinalTranscription(text)
             }
         }
         
-        return result == 0
-    }
-    
-    func applicationWillTerminate(_ notification: Notification) {
-        cleanup()
-    }
-    
-    func cleanup() {
-        contextTimer?.invalidate()
-        audioCapture.stop()
-        webSocketClient.disconnect()
-        engineManager.stop()
-    }
-    
-    // MARK: - Context Monitoring
-    
-    func startContextMonitoring() {
-        contextTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-            self?.checkContextAndStream()
+        // Partial transcription (ghost text) - updates as you speak
+        engine.onPartialTranscription = { [weak self] partial in
+            Task { @MainActor in
+                self?.handlePartialTranscription(partial)
+            }
+        }
+        
+        engine.onSpeechStart = { [weak self] in
+            Task { @MainActor in
+                self?.overlayWindow?.overlayViewModel.status = .speaking
+                self?.overlayWindow?.overlayViewModel.isSpeaking = true
+                self?.updateStatusIcon()
+                self?.showOverlay()
+            }
+        }
+        
+        engine.onSpeechEnd = { [weak self] in
+            Task { @MainActor in
+                self?.overlayWindow?.overlayViewModel.status = .listening
+                self?.overlayWindow?.overlayViewModel.isSpeaking = false
+                self?.updateStatusIcon()
+                
+                // Auto-hide after a delay
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if self?.overlayWindow?.overlayViewModel.isSpeaking == false {
+                    self?.overlayWindow?.orderOut(nil)
+                }
+            }
         }
     }
     
-    func checkContextAndStream() {
-        let isInputFocused = InputSimulator.isTextInputFocused()
-        
-        // If user just focused an input and we have pending text, stream it
-        if isInputFocused && !pendingText.isEmpty {
-            streamPendingToInput()
-        }
-        
-        wasInputFocused = isInputFocused
+    func observeEngineStatus() {
+        engine.$status
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateOverlayStatus()
+                self?.updateStatusIcon()
+            }
+            .store(in: &cancellables)
     }
     
-    func streamPendingToInput() {
-        guard !pendingText.isEmpty else { return }
+    /// Handle partial transcription updates (ghost text)
+    /// Updates existing text as the model refines its prediction
+    func handlePartialTranscription(_ partial: String) {
+        guard !isPaused else { return }
         
-        let textToSend = pendingText
-        pendingText = ""
-        sentText += textToSend
+        // Check if input is focused
+        guard InputSimulator.isTextInputFocused() else {
+            return
+        }
         
-        // Type it out
-        inputSimulator.typeText(textToSend)
+        // Calculate diff and update
+        inputSimulator.applyTextUpdate(from: currentTypedText, to: partial)
+        currentTypedText = partial
+    }
+    
+    /// Handle final transcription (EOU detected)
+    /// The text is already typed via partials, just finalize
+    func handleFinalTranscription(_ text: String) {
+        guard !isPaused else { return }
         
-        // Update overlay
-        updateOverlay()
+        // Check if input is focused
+        guard InputSimulator.isTextInputFocused() else {
+            NSLog("[Yappatron] No text input focused, ignoring transcription")
+            return
+        }
+        
+        // Ensure final text is correct (in case partials diverged)
+        if currentTypedText != text {
+            inputSimulator.applyTextUpdate(from: currentTypedText, to: text)
+        }
+        
+        // Add trailing space for next utterance
+        inputSimulator.typeString(" ")
+        
+        // Press enter if enabled
+        if pressEnterAfterSpeech {
+            inputSimulator.pressEnter()
+        }
+        
+        // Reset for next utterance
+        currentTypedText = ""
+    }
+    
+    func updateOverlayStatus() {
+        switch engine.status {
+        case .initializing:
+            overlayWindow?.overlayViewModel.status = .initializing
+        case .downloadingModels:
+            overlayWindow?.overlayViewModel.status = .downloading(0.5) // Indeterminate
+        case .ready:
+            overlayWindow?.overlayViewModel.status = .listening
+        case .listening:
+            overlayWindow?.overlayViewModel.status = .listening
+        case .error(let msg):
+            overlayWindow?.overlayViewModel.status = .error(msg)
+        }
     }
     
     // MARK: - Status Bar
@@ -153,9 +196,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Yappatron")
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            button.target = self
         }
-        
-        updateStatusIcon()
     }
     
     @objc func statusItemClicked(_ sender: NSStatusBarButton) {
@@ -173,15 +215,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         
         // Status
         let statusText: String
-        switch engineManager.status {
-        case .stopped: statusText = "⏹ Stopped"
-        case .starting: statusText = "⏳ Starting..."
-        case .running: statusText = isPaused ? "⏸ Paused" : "🎙 Listening"
+        switch engine.status {
+        case .initializing: statusText = "⏳ Initializing..."
+        case .downloadingModels: statusText = "⬇️ Downloading..."
+        case .ready, .listening: statusText = isPaused ? "⏸ Paused" : "🎙 Listening"
         case .error(let msg): statusText = "❌ \(msg)"
         }
-        let statusItem = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
-        statusItem.isEnabled = false
-        menu.addItem(statusItem)
+        
+        let statusMenuItem = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
+        statusMenuItem.isEnabled = false
+        menu.addItem(statusMenuItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -193,19 +236,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         
         menu.addItem(NSMenuItem.separator())
         
-        let undoWordItem = NSMenuItem(title: "Undo Word", action: #selector(undoWordAction), keyEquivalent: "z")
-        undoWordItem.keyEquivalentModifierMask = [.command, .shift]
-        menu.addItem(undoWordItem)
-        
-        menu.addItem(NSMenuItem(title: "Undo All", action: #selector(undoAllAction), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Clear", action: #selector(clearAction), keyEquivalent: ""))
+        let enterItem = NSMenuItem(title: "Press Enter After Speech", action: #selector(toggleEnterAction), keyEquivalent: "")
+        enterItem.state = pressEnterAfterSpeech ? .on : .off
+        menu.addItem(enterItem)
         
         menu.addItem(NSMenuItem.separator())
         
         if overlayWindow?.isVisible == true {
-            menu.addItem(NSMenuItem(title: "Hide Bubble", action: #selector(hideOverlayAction), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "Hide Indicator", action: #selector(hideOverlayAction), keyEquivalent: ""))
         } else {
-            menu.addItem(NSMenuItem(title: "Show Bubble", action: #selector(showOverlayAction), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "Show Indicator", action: #selector(showOverlayAction), keyEquivalent: ""))
         }
         
         menu.addItem(NSMenuItem.separator())
@@ -222,19 +262,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     func updateStatusIcon() {
-        guard let button = statusItem.button else { return }
+        guard let button = statusItem?.button else { return }
         
         let symbolName: String
         
-        switch engineManager.status {
-        case .stopped:
-            symbolName = "waveform"
-        case .starting:
+        switch engine.status {
+        case .initializing, .downloadingModels:
             symbolName = "waveform.badge.ellipsis"
-        case .running:
+        case .ready, .listening:
             if isPaused {
                 symbolName = "waveform.slash"
-            } else if isSpeaking {
+            } else if engine.isSpeaking {
                 symbolName = "waveform.circle.fill"
             } else {
                 symbolName = "waveform"
@@ -253,7 +291,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     
     func setupOverlay() {
         overlayWindow = OverlayWindow()
-        overlayController = OverlayWindowController(window: overlayWindow)
+        overlayController = OverlayWindowController(window: overlayWindow!)
     }
     
     func toggleOverlay() {
@@ -269,132 +307,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         overlayWindow?.positionAtBottom()
     }
     
-    func updateOverlay() {
-        overlayWindow?.updateText(pending: pendingText, sent: sentText)
-    }
-    
-    func scheduleHideOverlay() {
-        guard settings.autoHideOverlay else { return }
-        guard pendingText.isEmpty else { return } // Don't hide if there's pending text
-        
-        hideTimer?.invalidate()
-        hideTimer = Timer.scheduledTimer(withTimeInterval: settings.autoHideDelay, repeats: false) { [weak self] _ in
-            if self?.isSpeaking == false && self?.pendingText.isEmpty == true {
-                self?.overlayWindow?.orderOut(nil)
-            }
-        }
-    }
-    
-    // MARK: - Audio Capture
-    
-    func setupAudioCapture() {
-        audioCapture.onAudioChunk = { [weak self] samples in
-            guard let self = self, !self.isPaused else { return }
-            self.webSocketClient.sendAudioChunk(samples)
-        }
-        
-        audioCapture.onStatusChange = { [weak self] status in
-            DispatchQueue.main.async {
-                switch status {
-                case .error(let msg):
-                    NSLog("[Audio] Error: %@", msg)
-                case .noPermission:
-                    NSLog("[Audio] No microphone permission")
-                default:
-                    break
-                }
-                self?.updateStatusIcon()
-            }
-        }
-    }
-    
-    // MARK: - WebSocket
-    
-    func setupWebSocket() {
-        webSocketClient = WebSocketClient()
-        
-        webSocketClient.onText = { [weak self] text in
-            self?.handleIncomingText(text)
-        }
-        
-        webSocketClient.onSpeechStart = { [weak self] in
-            DispatchQueue.main.async {
-                self?.isSpeaking = true
-                self?.overlayWindow?.overlayViewModel.isSpeaking = true
-                self?.updateStatusIcon()
-                
-                if self?.settings.showOverlayOnSpeech == true {
-                    self?.showOverlay()
-                }
-                
-                self?.hideTimer?.invalidate()
-            }
-        }
-        
-        webSocketClient.onSpeechEnd = { [weak self] in
-            DispatchQueue.main.async {
-                self?.isSpeaking = false
-                self?.overlayWindow?.overlayViewModel.isSpeaking = false
-                self?.updateStatusIcon()
-                self?.scheduleHideOverlay()
-            }
-        }
-        
-        webSocketClient.onConnected = { [weak self] in
-            DispatchQueue.main.async {
-                self?.audioCapture.start()
-            }
-        }
-        
-        webSocketClient.onDisconnected = { [weak self] in
-            DispatchQueue.main.async {
-                self?.audioCapture.stop()
-            }
-        }
-    }
-    
-    func handleIncomingText(_ text: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            // Add to pending buffer
-            self.pendingText += text
-            
-            // Update overlay
-            self.updateOverlay()
-            
-            // If input is focused right now, stream immediately
-            if InputSimulator.isTextInputFocused() {
-                self.streamPendingToInput()
-            }
-        }
-    }
-    
     // MARK: - Hot Keys
     
     func setupHotKeys() {
-        undoWordHotKey = HotKey(key: .z, modifiers: [.command, .shift])
-        undoWordHotKey?.keyDownHandler = { [weak self] in
-            self?.undoWordAction()
-        }
-        
-        undoAllHotKey = HotKey(key: .z, modifiers: [.command, .option, .shift])
-        undoAllHotKey?.keyDownHandler = { [weak self] in
-            self?.undoAllAction()
-        }
-        
         togglePauseHotKey = HotKey(key: .escape, modifiers: [.command])
         togglePauseHotKey?.keyDownHandler = { [weak self] in
-            if self?.isPaused == true {
-                self?.resumeAction()
-            } else {
-                self?.pauseAction()
+            Task { @MainActor in
+                if self?.isPaused == true {
+                    self?.resumeAction()
+                } else {
+                    self?.pauseAction()
+                }
             }
         }
         
         toggleOverlayHotKey = HotKey(key: .space, modifiers: [.option])
         toggleOverlayHotKey?.keyDownHandler = { [weak self] in
-            self?.toggleOverlay()
+            Task { @MainActor in
+                self?.toggleOverlay()
+            }
         }
     }
     
@@ -402,58 +333,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     
     @objc func pauseAction() {
         isPaused = true
-        webSocketClient.sendPause()
+        engine.stopListening()
         updateStatusIcon()
     }
     
     @objc func resumeAction() {
         isPaused = false
-        webSocketClient.sendResume()
+        engine.startListening()
         updateStatusIcon()
     }
     
-    @objc func undoWordAction() {
-        // Undo from sent text
-        guard !sentText.isEmpty else { return }
-        
-        var undone = ""
-        
-        // Remove trailing spaces
-        while sentText.last == " " {
-            let char = sentText.removeLast()
-            undone = String(char) + undone
-            inputSimulator.deleteChar()
-        }
-        
-        // Remove word
-        while !sentText.isEmpty && sentText.last != " " {
-            let char = sentText.removeLast()
-            undone = String(char) + undone
-            inputSimulator.deleteChar()
-        }
-        
-        // Put back in pending
-        pendingText = undone + pendingText
-        updateOverlay()
-    }
-    
-    @objc func undoAllAction() {
-        // Pull all sent text back
-        guard !sentText.isEmpty else { return }
-        
-        for _ in sentText {
-            inputSimulator.deleteChar()
-        }
-        
-        pendingText = sentText + pendingText
-        sentText = ""
-        updateOverlay()
-    }
-    
-    @objc func clearAction() {
-        pendingText = ""
-        sentText = ""
-        updateOverlay()
+    @objc func toggleEnterAction() {
+        pressEnterAfterSpeech.toggle()
     }
     
     @objc func showOverlayAction() {
@@ -470,7 +361,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func quitAction() {
-        cleanup()
+        engine.cleanup()
         NSApp.terminate(nil)
+    }
+}
+
+// MARK: - Settings View
+
+struct SettingsView: View {
+    var body: some View {
+        Form {
+            Section("About") {
+                Text("Yappatron")
+                    .font(.headline)
+                Text("Voice dictation powered by Parakeet TDT")
+                    .foregroundStyle(.secondary)
+            }
+            
+            Section("Shortcuts") {
+                LabeledContent("Toggle Pause", value: "⌘ Escape")
+                LabeledContent("Toggle Indicator", value: "⌥ Space")
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 350, height: 200)
     }
 }
