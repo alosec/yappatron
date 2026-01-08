@@ -44,6 +44,60 @@ Swift (Yappatron.app)              Python Engine
 - App checks if engine already running (port 9876) before starting another
 - Stale engine processes can cause conflicts - always clean kill before testing
 
+---
+
+## Real-Time Streaming Transcription Research (Jan 2026)
+
+### The UX Goal
+Words appearing in real-time as you speak (like Aqua Voice), not batch processing after speech ends.
+
+### The Core Constraint
+We can only "paste" via CGEvent keystrokes - can't edit text already typed. Once a character is sent, it's sent.
+
+### The Problem with Naive Streaming + Live Paste
+- Streaming models emit *provisional* text that changes as context arrives
+- "I want to" → "I want to go" → "I want to go home"
+- If we paste immediately, we can't un-paste when model refines
+
+### Possible Approaches
+
+1. **Aqua Voice style:** Stream words to bubble in real-time, but only paste on trigger (silence detected or hotkey release). User sees live preview, paste is "committed" version.
+
+2. **Aggressive streaming with backspace corrections:** Paste words as they're confirmed, use backspace to correct when model refines. Could be glitchy but would be an amazing party trick if smooth.
+
+3. **Hybrid:** Show streaming preview in bubble, paste batches every N words once stable.
+
+### Best Open Source STT Models (2026 Benchmarks)
+
+| Model | WER | RTFx (Speed) | Params | Use Case |
+|-------|-----|--------------|--------|----------|
+| **Canary Qwen 2.5B** | 5.63% | 418x | 2.5B | Max accuracy (English) |
+| **IBM Granite Speech 3.3 8B** | 5.85% | - | ~9B | Enterprise English |
+| **Whisper Large V3** | 7.4% | varies | 1.55B | Multilingual (99+ langs) |
+| **Whisper Large V3 Turbo** | 7.75% | 216x | 809M | Fast multilingual |
+| **Distil-Whisper** | ~7.4% | 6x Whisper | 756M | Fast English |
+| **Parakeet TDT 1.1B** | ~8% | **>2000x** | 1.1B | **Ultra low-latency streaming** |
+| **Moonshine** | varies | fast | 27M | Edge/mobile |
+
+**WER** = Word Error Rate (lower = more accurate). 5% = 1 error per 20 words.
+**RTFx** = Real-Time Factor (higher = faster). 2000x = processes 33 min of audio in 1 second.
+
+### Top Candidates for Real-Time Streaming
+
+1. **Parakeet TDT** (NVIDIA) - RTFx >2000, RNN-Transducer architecture enables streaming with minimal latency. Purpose-built for live captioning. Trade-off: 23rd in accuracy.
+
+2. **Moonshine** - 27M params, designed for edge devices, has live captions demo. 5-15x faster than Whisper. Last commit Nov 2025.
+
+3. **Distil-Whisper** - 6x faster than Whisper, stays in Whisper ecosystem. English only.
+
+### Likely Implementation Plan
+- Keep Whisper as "high quality" batch option
+- Add Parakeet TDT or Moonshine for real-time streaming
+- Aggressive streaming approach: paste words as confident, backspace to correct
+- This would be the differentiating "party trick" feature
+
+---
+
 ## Key File Paths
 ```
 /Users/alex/Workspace/yappatron/
@@ -91,7 +145,7 @@ cd ~/Workspace/yappatron && export PATH="$HOME/.local/bin:$PATH" && td list
 - Apple Silicon M4 MacBook Air, 16GB RAM
 - Uses `td` tool for tasks (PATH: `$HOME/.local/bin`)
 
-## Open Tasks (9)
+## Open Tasks (11)
 - yap-d192: Website deployment
 - yap-d958: Feature: Custom vocabulary UI  
 - yap-8e8b: Feature: App notarization
@@ -101,8 +155,12 @@ cd ~/Workspace/yappatron && export PATH="$HOME/.local/bin:$PATH" && td list
 - yap-19b3: UI: Bottom bar ticker mode
 - yap-3ed9: Core: Real-time streaming transcription
 - yap-12d5: UI: Fix overlay text scroll to end
+- yap-0e4f: UI: Bubble as status-only when input focused
+- yap-6b90: Core: Filter Whisper hallucinations
+- yap-b856: Feature: Press Enter after speech
 
 ## Git Commits
+- 6fc6b6b: Update MEMBANK with accessibility insights
 - ddd5a6a: Fix paste - accessibility permission tied to app bundle signature
 - 5122021: Add proper accessibility permission handling
 - 6ef5079: Initial commit - MVP
@@ -121,3 +179,4 @@ cd ~/Workspace/yappatron && export PATH="$HOME/.local/bin:$PATH" && td list
 ## Known Issues
 - Overlay text doesn't scroll to end properly (shows middle)
 - Transcription is batch (waits for speech end) not real-time streaming
+- Whisper occasionally hallucinates (e.g., "bye bye bye bye")
