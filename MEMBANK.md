@@ -1,139 +1,101 @@
-# Yappatron Project Memory Bank
+# Yappatron Memory Bank
 
-## What is Yappatron?
-Open-source always-on voice dictation for macOS. No hotkeys, no toggles—just yap.
+## Project Overview
+**Yappatron** - Open-source always-on voice dictation app (Wispr Flow replacement). No hotkeys, no toggles - just talk and text streams into focused inputs.
 
-**Goal**: Replace Wispr Flow with something that:
-- Always listens (no push-to-talk)
-- Streams text character-by-character in real-time
-- Is fully local/offline (Whisper-based)
-- Shows streaming text in a floating bubble (AquaVoice-style)
-- Supports speaker identification (only YOUR voice triggers)
-- Has custom vocabulary support
+## Current Status: BROKEN - PASTING NOT WORKING
+Text is transcribing but not being typed into focused inputs. Need to debug.
 
 ## Architecture
-
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Yappatron.app                            │
-│  ┌─────────────────────┐    ┌────────────────────────────┐ │
-│  │   Swift UI          │───►│   Python Engine            │ │
-│  │   - Menu bar icon   │audio│   - VAD (Silero)          │ │
-│  │   - Floating bubble │◄───│   - Whisper transcription  │ │
-│  │   - Audio capture   │text│   - Speaker ID             │ │
-│  │   - Keystroke sim   │    │   - Custom vocabulary      │ │
-│  └─────────────────────┘    └────────────────────────────┘ │
-│         ▲        │                                          │
-│         │        │                                          │
-│    Keystrokes  Microphone                                   │
-└─────────────────────────────────────────────────────────────┘
+Swift (Yappatron.app)              Python Engine
+┌──────────────────────┐           ┌──────────────────────┐
+│ AVFoundation mic     │──audio──► │ Silero VAD           │
+│ Menu bar UI          │  (WS)     │ faster-whisper       │
+│ Floating overlay     │◄──text─── │ Speaker ID (optional)│
+│ Keystroke simulation │           │                      │
+└──────────────────────┘           └──────────────────────┘
 ```
 
-## Current State (as of 2026-01-07)
+- **WebSocket port**: 9876
+- **Audio format**: 16kHz mono float32, base64 encoded chunks (512 samples)
+- **Model**: Currently using `small` (~500MB, good quality)
 
-### What Works
-- ✅ Audio capture in Swift (AVFoundation) - proper app permissions!
-- ✅ Audio streaming from Swift → Python via WebSocket
-- ✅ VAD (Silero) in Python
-- ✅ Whisper transcription (faster-whisper)
-- ✅ Swift menu bar app with floating overlay
-- ✅ WebSocket communication between Python and Swift
-- ✅ App bundle in /Applications/Yappatron.app
-- ✅ Custom vocabulary (YAML config)
-- ✅ Speaker identification framework
-- ✅ Text streaming (fixed race condition)
+## GitHub Repo
+https://github.com/alosec/yappatron
 
-### Key Files
-- `packages/core/yappatron/` - Python engine
-  - `audio.py` - VAD + mic capture
-  - `transcribe.py` - Whisper wrapper
-  - `server.py` - WebSocket server, TextBuffer
-  - `main.py` - CLI entry point
-- `packages/app/Yappatron/Sources/` - Swift UI
-  - `YappatronApp.swift` - Main app, menu bar
-  - `OverlayWindow.swift` - Floating bubble
-  - `TextBuffer.swift` - Buffer management (BUG HERE?)
-  - `WebSocketClient.swift` - Connects to Python
-  - `InputSimulator.swift` - Keystroke simulation
+## Key File Paths
+```
+/Users/alex/Workspace/yappatron/
+├── packages/core/yappatron/
+│   ├── main.py          # Python entry - VAD, transcription, WebSocket server
+│   ├── server.py        # WebSocket server - receives audio, sends text
+│   ├── transcribe.py    # faster-whisper wrapper
+│   └── vocabulary.py    # Custom vocabulary processing
+├── packages/app/Yappatron/Sources/
+│   ├── YappatronApp.swift      # Main app delegate
+│   ├── AudioCapture.swift      # AVFoundation mic capture
+│   ├── WebSocketClient.swift   # Connects to Python engine
+│   ├── EngineManager.swift     # Spawns/manages Python subprocess
+│   ├── Settings.swift          # Settings UI + AppSettings class
+│   ├── InputSimulator.swift    # CGEvent keystroke simulation + accessibility
+│   └── OverlayWindow.swift     # Floating bubble UI
+├── packages/app/Yappatron/Yappatron.app/  # App bundle
+├── .venv/                       # Python 3.12 venv
+└── MEMBANK.md                   # This file
+```
 
-### How to Run
+## Commands
 ```bash
-# Launch app (starts both engine + UI)
+# Build Swift app
+cd ~/Workspace/yappatron/packages/app/Yappatron && swift build
+
+# Update app bundle
+cp .build/debug/Yappatron /Applications/Yappatron.app/Contents/MacOS/
+
+# Launch
 open /Applications/Yappatron.app
 
-# Or manually:
-cd ~/Workspace/yappatron
-source .venv/bin/activate
-yappatron --no-speaker-id --model base  # Terminal 1
-./packages/app/Yappatron/.build/debug/Yappatron  # Terminal 2
+# Kill all
+pkill -9 -f yappatron; pkill -9 -f Yappatron
 
-# View logs
+# View engine log
 tail -f ~/.yappatron/engine.log
+
+# Task management
+cd ~/Workspace/yappatron && export PATH="$HOME/.local/bin:$PATH" && td list
+
+# Watch Swift logs
+log show --predicate 'process == "Yappatron"' --last 1m | grep "\[Yappatron\]"
 ```
 
-### The Streaming Bug - Investigation Notes
+## Known Issues
+1. **CURRENT BUG**: Text not pasting to focused inputs
+   - Transcription works (see engine.log)
+   - WebSocket connected
+   - Issue likely in: InputSimulator.isTextInputFocused() or streamPendingToInput()
 
-The bug manifests as repeated partial text. Example:
-```
-All right, but weAll right, but we need toAll right,All right, but we nAll right...
-```
+## Recent Git Commits
+- 5122021: Add proper accessibility permission handling
+- 6ef5079: Initial commit - MVP
 
-**Hypotheses:**
-1. Swift `streamNextChar()` timer firing multiple times
-2. Race between `handleIncomingWord()` adding to buffer and `streamNextChar()` consuming
-3. WebSocket sending duplicate messages
-4. Python transcriber emitting words multiple times
+## User Preferences
+- macOS 15.6 Sequoia (upgrading to macOS 26 for Liquid Glass)
+- Apple Silicon M4 MacBook Air, 16GB RAM
+- Uses `td` tool for task tracking (PATH: `$HOME/.local/bin`)
+- Prefers committing working states frequently
 
-**The flow:**
-1. Python: `transcriber.transcribe_utterance(audio)` → calls `on_word` for each word
-2. Python: `server.emit_word(word)` → sends via WebSocket
-3. Swift: `handleIncomingWord(word)` → adds word to `textBuffer`
-4. Swift: If input focused, starts `streamTimer` (20ms interval)
-5. Swift: `streamNextChar()` → calls `textBuffer.sendChar()` → `inputSimulator.typeChar()`
+## Open Tasks (8)
+- yap-d192: Website deployment
+- yap-d958: Feature: Custom vocabulary UI
+- yap-8e8b: Feature: App notarization
+- yap-0f5a: Polish: Error handling
+- yap-94a6: Polish: First-run experience
+- yap-dec5: UI: Liquid glass overlay style (waiting for macOS 26)
+- yap-19b3: UI: Bottom bar ticker mode
+- yap-3ed9: Core: Real-time streaming transcription
 
-**Suspect**: Step 4-5 race condition. Multiple words arriving while timer is running.
-
-## Configuration
-
-### Custom Vocabulary
-File: `~/.yappatron/vocabulary.yaml`
-```yaml
-vocabulary:
-  - word: Yappatron
-    aliases: ["yap a tron", "yapper tron"]
-  - word: API
-    aliases: ["a p i"]
-```
-
-### Settings
-File: `~/.yappatron/config/settings.yaml` (not yet implemented in UI)
-
-## Dependencies
-
-### Python
-- faster-whisper (Whisper transcription)
-- silero-vad (voice activity detection)
-- sounddevice (audio capture)
-- speechbrain (speaker identification)
-- websockets (UI communication)
-
-### Swift
-- Starscream (WebSocket client)
-- HotKey (global keyboard shortcuts)
-
-## Next Steps (Priority Order)
-
-1. ~~FIX THE STREAMING BUG~~ ✅ Fixed
-2. ~~Move audio capture to Swift~~ ✅ Done - mic permissions now attributed to Yappatron.app
-3. Add settings UI for model selection, thresholds
-4. Launch at login option
-5. Website deployment
-
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| ⌘⇧Z | Undo last word |
-| ⌘⌥⇧Z | Pull all text back to bubble |
-| ⌘⎋ | Toggle pause |
-| ⌥Space | Toggle overlay |
+## Completed (10)
+- Settings UI, model selection, launch at login, quit function
+- Settings window, status indicators, overlay improvements, keyboard shortcuts
+- Undo support, audio capture reliability
