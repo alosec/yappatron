@@ -11,7 +11,7 @@ https://github.com/alosec/yappatron
 
 ## Architecture (Production)
 ```
-Swift (Yappatron2.app)
+Swift (Yappatron.app)
 ┌─────────────────────────────────────────────────┐
 │ AVFoundation mic (48kHz → 16kHz)                │
 │ StreamingEouAsrManager (160ms chunks)           │
@@ -27,22 +27,27 @@ Swift (Yappatron2.app)
 - ✅ **Instant streaming** - words appear as you speak (160ms latency)
 - ✅ **Ghost text** - updates live with backspace corrections
 - ✅ **Status bubble** - blue while speaking, green when done
-- ✅ **Press Enter on complete** - auto-sends when EOU detected
+- ✅ **Press Enter on complete** - auto-sends when EOU detected (persisted setting)
 - ✅ **Pure Swift** - no Python, no WebSocket, single process
 - ✅ **Neural Engine** - runs on ANE for efficiency
 
-## Known Issue: EOU Timing (yap-ddf5)
-The End-of-Utterance detection can hang for 5-7 seconds after speech ends. Root cause: the model intermittently produces tokens during silence, which resets the 800ms debounce timer. This is a FluidAudio model behavior, not easily fixable on our end.
+## CRITICAL BUG: Race Condition Crash (yap-4293)
+App crashes randomly with assertion failure in `StreamingEouAsrManager.process()` at `removeFirst(_:)`. This is a thread-safety issue in FluidAudio's internal audio buffer handling.
 
-**Attempted fixes that caused regressions:**
-- Silero VAD as gate → race conditions, worse behavior
-- Lowering debounce → cuts off speech mid-sentence
+**Current mitigation:** Serial DispatchQueue + semaphore in `processAudioBuffer()` - NOT SUFFICIENT.
 
-**The 800ms debounce is correct** - shorter would cause false triggers during natural pauses.
+**Real fix needed:** Either FluidAudio needs internal synchronization, or we need proper actor isolation.
+
+## EOU Behavior (Understood)
+The model is semantic-aware for End-of-Utterance detection:
+- **Long/complete thoughts** → finalizes quickly after you stop
+- **Short fragments** → waits longer, thinks you might continue
+
+This is intentional. User adapts speech patterns to signal completion with conclusive language.
 
 ## Key Files
 ```
-/Users/alex/Workspace/yappatron/packages/app/Yappatron2/
+/Users/alex/Workspace/yappatron/packages/app/Yappatron/
 ├── Package.swift                 # FluidAudio + HotKey deps
 └── Sources/
     ├── YappatronApp.swift        # Main app, menu bar, hotkeys
@@ -54,14 +59,14 @@ The End-of-Utterance detection can hang for 5-7 seconds after speech ends. Root 
 ## Commands
 ```bash
 # Build
-cd ~/Workspace/yappatron/packages/app/Yappatron2 && swift build
+cd ~/Workspace/yappatron/packages/app/Yappatron && swift build
 
 # Deploy
-cp .build/debug/Yappatron /Applications/Yappatron2.app/Contents/MacOS/
-codesign --force --deep --sign - /Applications/Yappatron2.app
+cp .build/debug/Yappatron /Applications/Yappatron.app/Contents/MacOS/
+codesign --force --deep --sign - /Applications/Yappatron.app
 
 # Run (in tmux)
-tmux new-session -d -s yappatron '/Applications/Yappatron2.app/Contents/MacOS/Yappatron 2>&1 | tee /tmp/yappatron.log'
+tmux new-session -d -s yappatron '/Applications/Yappatron.app/Contents/MacOS/Yappatron 2>&1 | tee /tmp/yappatron.log'
 
 # Watch logs
 tail -f /tmp/yappatron.log
@@ -78,8 +83,8 @@ export PATH="$HOME/.local/bin:$PATH" && td list
 ### StreamingEouAsrManager
 - **Chunk size:** 160ms (2560 samples)
 - **EOU debounce:** 800ms (in FluidAudio code)
-- **Model:** parakeet-realtime-eou-120m-coreml
-- **Issue:** Model produces tokens during silence, resetting debounce
+- **Model:** parakeet-realtime-eou-120m-coreml (120M params, 5x smaller than batch model)
+- **Behavior:** Model is conservative on short utterances, waits for complete thoughts
 
 ### Ghost Text Flow
 1. partialCallback fires with updated text
@@ -95,19 +100,19 @@ export PATH="$HOME/.local/bin:$PATH" && td list
 └── parakeet-tdt-0.6b-v2-coreml/    # Batch models (not used)
 ```
 
-## Open Issues
-- **yap-ddf5** (bug): EOU detection hangs 5-7 seconds sometimes
-- yap-d192: Website deployment
-- yap-d958: Custom vocabulary
-- yap-8e8b: App notarization
-- yap-0f5a: Error handling polish
-- yap-94a6: First-run experience
-- yap-dec5: Liquid glass overlay (macOS 26)
-- yap-19b3: Bottom bar ticker mode
-- yap-12d5: Overlay text scroll
-- yap-0e4f: Bubble status-only mode
-- yap-6b90: Filter hallucinations
-- yap-b856: Press Enter after speech
+## Open Issues (Priority Order)
+1. **yap-4293** (P0 bug): App crashes on FluidAudio race condition - FIX NEXT
+2. yap-d192: Website deployment
+3. yap-d958: Custom vocabulary
+4. yap-8e8b: App notarization
+5. yap-0f5a: Error handling polish
+6. yap-94a6: First-run experience
+7. yap-dec5: Liquid glass overlay (macOS 26)
+8. yap-19b3: Bottom bar ticker mode
+9. yap-12d5: Overlay text scroll
+10. yap-0e4f: Bubble status-only mode
+11. yap-6b90: Filter hallucinations
+12. yap-b856: Press Enter after speech
 
 ## User Environment
 - macOS 26.2 (Tahoe)
@@ -115,10 +120,13 @@ export PATH="$HOME/.local/bin:$PATH" && td list
 - Task tool: `td` at `$HOME/.local/bin`
 
 ## Session Summary (Jan 7, 2026)
-Started with slow Python+Whisper batch transcription. Ended with instant real-time streaming via FluidAudio's StreamingEouAsrManager. The core UX is "profoundly strong" - words appear as you speak them. EOU timing needs work but the foundation is solid.
+- Started with slow Python+Whisper batch transcription
+- Rewrote in pure Swift with FluidAudio StreamingEouAsrManager
+- Achieved instant real-time streaming (160ms latency)
+- Consolidated Yappatron2 → Yappatron (single app bundle)
+- Added UserDefaults persistence for Enter setting
+- Discovered EOU is semantic-aware (works as intended for complete thoughts)
+- **Unresolved:** Race condition crash in FluidAudio - needs proper fix
 
-## Git Log
-- 15f23fa: MEMBANK: Document real-time streaming achievement
-- 3d8fd95: 🚀 Real-time streaming transcription!
-- dea9b12: Yappatron2: Working batch transcription
-- c383b9a: WIP: Swift-only rewrite with FluidAudio
+## Git Status
+Clean at cb4e577, pushed to origin.
