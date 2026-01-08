@@ -43,6 +43,11 @@ class TranscriptionEngine: ObservableObject {
     // Track current partial for diffing
     private var currentPartial: String = ""
     
+    // Serial queue for audio processing to prevent race conditions
+    private let processingQueue = DispatchQueue(label: "com.yappatron.audioProcessing")
+    private var isProcessing = false
+    private var pendingBuffer: AVAudioPCMBuffer?
+    
     init() {
         log("TranscriptionEngine initialized")
     }
@@ -304,13 +309,24 @@ class TranscriptionEngine: ObservableObject {
             log("Audio chunk #\(audioChunkCount), frames: \(outputBuffer.frameLength)")
         }
         
-        // Feed to streaming manager
-        Task {
-            do {
-                _ = try await streamingManager?.process(audioBuffer: outputBuffer)
-            } catch {
-                log("Streaming process error: \(error.localizedDescription)")
+        // Serialize audio processing to prevent race conditions in FluidAudio
+        processingQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Use a semaphore to wait for async processing
+            let semaphore = DispatchSemaphore(value: 0)
+            
+            Task {
+                do {
+                    _ = try await self.streamingManager?.process(audioBuffer: outputBuffer)
+                } catch {
+                    log("Streaming process error: \(error.localizedDescription)")
+                }
+                semaphore.signal()
             }
+            
+            // Wait for processing to complete before allowing next chunk
+            semaphore.wait()
         }
     }
     
