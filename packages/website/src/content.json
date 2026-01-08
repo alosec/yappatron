@@ -1,0 +1,56 @@
+{
+  "name": "yappatron",
+  "tagline": "just yap.",
+  "description": "always-on voice dictation for mac. no hotkeys. no toggles. just talk.",
+  "badges": [
+    { "label": "MIT", "icon": "license" },
+    { "label": "macOS", "icon": "apple" },
+    { "label": "local", "icon": "shield" }
+  ],
+  "features": [
+    {
+      "title": "always listening",
+      "body": "No push-to-talk. Start talking, words appear. Stop talking, it waits."
+    },
+    {
+      "title": "160ms latency",
+      "body": "Real-time streaming. Characters appear as you speak."
+    },
+    {
+      "title": "fully local",
+      "body": "All processing on-device. No cloud. Your words never leave your machine."
+    },
+    {
+      "title": "neural engine",
+      "body": "Runs on Apple Silicon ANE. Efficient, not draining your battery."
+    }
+  ],
+  "steps": [
+    { "label": "mic capture", "detail": "AVFoundation grabs audio, resamples to 16kHz" },
+    { "label": "streaming ASR", "detail": "160ms chunks fed to Parakeet model on Neural Engine" },
+    { "label": "ghost text", "detail": "partials stream into focused input with live corrections" },
+    { "label": "end of utterance", "detail": "model detects you're done, optionally presses enter" }
+  ],
+  "requirements": [
+    "macOS 14+ (Sonoma)",
+    "Apple Silicon (M1/M2/M3)",
+    "Microphone permission",
+    "Accessibility permission"
+  ],
+  "terminal": [
+    { "type": "prompt", "text": "~ " },
+    { "type": "command", "text": "yappatron" },
+    { "type": "output", "text": "loading parakeet-eou-120m..." },
+    { "type": "output", "text": "listening..." },
+    { "type": "output", "text": "" },
+    { "type": "speech", "text": "hello world this is me talking naturally" },
+    { "type": "output", "text": "[done ↵]" }
+  ],
+  "themes": [
+    { "id": "mist", "accent": "#94a3b8" },
+    { "id": "lotus", "accent": "#e879a9" },
+    { "id": "ember", "accent": "#f59e0b" },
+    { "id": "moss", "accent": "#34d399" },
+    { "id": "depth", "accent": "#38bdf8" }
+  ]
+}
