@@ -3,63 +3,41 @@
 ## Project Overview
 **Yappatron** - Open-source always-on voice dictation app. No hotkeys, no toggles - just talk and text streams into focused inputs.
 
-## Current Status: Implementing Real-time Streaming 🚧
-Batch transcription working (92-98% accuracy). Now implementing true streaming with `StreamingEouAsrManager`.
+## Current Status: REAL-TIME STREAMING ACHIEVED 🎉🚀
+**THE HOLY GRAIL:** Words appear AS YOU SPEAK THEM. 160ms latency. Instant.
 
 ## GitHub Repo
 https://github.com/alosec/yappatron
 
-## Active Task: yap-3ed9 (Real-time Streaming)
-
-### Architecture Change
-```
-BEFORE (Batch):
-Audio → Accumulate → Silence detected → Transcribe whole buffer → Paste
-
-AFTER (Streaming):  
-Audio → 160ms chunks → StreamingEouAsrManager → partialCallback (ghost text)
-                                               → eouCallback (commit final)
-```
-
-### Key Components
-- **StreamingEouAsrManager**: 160ms chunk processing, EOU detection built-in
-- **partialCallback**: Fires after each chunk with current transcript
-- **eouCallback**: Fires when utterance ends (replaces our RMS VAD + silence timeout)
-- **eouDebounceMs**: 1280ms default silence before confirming end
-
-### Files to Modify
-```
-packages/app/Yappatron2/Sources/
-├── TranscriptionEngine.swift  # Rewrite with StreamingEouAsrManager
-├── InputSimulator.swift       # Add ghost text update (backspace + retype)
-└── YappatronApp.swift         # Wire up partial vs final callbacks
-```
-
-## Architecture (Target)
+## Architecture (Production)
 ```
 Swift (Yappatron2.app)
 ┌─────────────────────────────────────────────────┐
-│ AVFoundation mic (48kHz)                        │
-│ vDSP resampling to 16kHz mono                   │
+│ AVFoundation mic (48kHz → 16kHz)                │
 │ StreamingEouAsrManager (160ms chunks)           │
-│   ├── partialCallback → ghost text updates      │
-│   └── eouCallback → final commit                │
-│ CGEvent keystrokes (with backspace correction)  │
+│   ├── partialCallback → ghost text (live)      │
+│   └── eouCallback → finalize on speech end     │
+│ InputSimulator (backspace corrections)          │
 │ Menu bar UI + status bubble overlay             │
 └─────────────────────────────────────────────────┘
 ```
 
+## Key Achievements
+- **160ms latency** - words appear as you speak
+- **EOU detection** - model knows when you stop talking (no manual VAD)
+- **AC noise immune** - EOU model ignores background noise
+- **Ghost text** - updates live with backspace corrections
+- **Pure Swift** - no Python, no WebSocket, single process
+
 ## Key Files
 ```
-/Users/alex/Workspace/yappatron/
-├── packages/app/Yappatron2/          # Pure Swift version
-│   ├── Package.swift                 # FluidAudio + HotKey deps
-│   └── Sources/
-│       ├── YappatronApp.swift        # Main app, menu bar, hotkeys
-│       ├── TranscriptionEngine.swift # Audio capture + streaming ASR
-│       ├── InputSimulator.swift      # CGEvent keystrokes + ghost text
-│       └── OverlayWindow.swift       # Status bubble UI
-└── MEMBANK.md
+/Users/alex/Workspace/yappatron/packages/app/Yappatron2/
+├── Package.swift                 # FluidAudio + HotKey deps
+└── Sources/
+    ├── YappatronApp.swift        # Main app, menu bar, hotkeys
+    ├── TranscriptionEngine.swift # StreamingEouAsrManager integration
+    ├── InputSimulator.swift      # CGEvent + ghost text updates
+    └── OverlayWindow.swift       # Status bubble UI
 ```
 
 ## Commands
@@ -67,51 +45,65 @@ Swift (Yappatron2.app)
 # Build
 cd ~/Workspace/yappatron/packages/app/Yappatron2 && swift build
 
-# Update app bundle
+# Deploy
 cp .build/debug/Yappatron /Applications/Yappatron2.app/Contents/MacOS/
 codesign --force --deep --sign - /Applications/Yappatron2.app
 
-# Run with logging (in tmux!)
+# Run (in tmux)
 tmux new-session -d -s yappatron '/Applications/Yappatron2.app/Contents/MacOS/Yappatron 2>&1 | tee /tmp/yappatron.log'
 
-# Watch logs
+# Watch
 tail -f /tmp/yappatron.log
 
 # Kill
 pkill -9 -f Yappatron
 
 # Tasks
-cd ~/Workspace/yappatron && export PATH="$HOME/.local/bin:$PATH" && td list
+export PATH="$HOME/.local/bin:$PATH" && td list
 ```
 
-## Technical Notes
+## Technical Details
 
-### FluidAudio Streaming Models
-- Located in: `.build/checkouts/FluidAudio/Sources/FluidAudio/ASR/Streaming/`
-- `StreamingEouAsrManager.swift` - main streaming interface
-- Requires separate streaming encoder models (different from batch)
-- Chunk sizes: 160ms (default), 320ms, 1600ms
+### StreamingEouAsrManager
+- **Chunk size:** 160ms (2560 samples at 16kHz)
+- **EOU debounce:** 800ms silence to confirm end
+- **Model:** parakeet-realtime-eou-120m-coreml
+- **Callbacks:** partialCallback (live updates), eouCallback (finalize)
 
-### Ghost Text Strategy
-When partial transcript changes:
-1. Calculate common prefix between old and new
-2. Send backspaces to delete divergent suffix
-3. Type new suffix
-Example: "hello wor" → "hello world" = type "ld"
-Example: "hello word" → "hello world" = backspace, type "ld"
+### Ghost Text Flow
+1. partialCallback fires with new text
+2. InputSimulator.applyTextUpdate() calculates diff
+3. Backspaces delete divergent suffix
+4. Types new suffix
+5. Result: seamless live updates
 
-### EOU vs VAD
-- Old: RMS threshold (0.015) + 1.2s silence timeout
-- New: EOU token predicted by model + 1280ms debounce
-- EOU is smarter - trained on speech patterns, not just energy
+### Models Location
+```
+~/Library/Application Support/FluidAudio/Models/
+├── parakeet-eou-streaming/160ms/  # Streaming models
+└── parakeet-tdt-0.6b-v2-coreml/   # Batch models (unused now)
+```
+
+## Remaining Tasks (Backlog)
+- yap-d192: Website deployment
+- yap-d958: Custom vocabulary
+- yap-8e8b: App notarization
+- yap-0f5a: Error handling polish
+- yap-94a6: First-run experience
+- yap-dec5: Liquid glass overlay (macOS 26)
+- yap-19b3: Bottom bar ticker mode
+- yap-12d5: Overlay text scroll
+- yap-0e4f: Bubble status-only mode
+- yap-6b90: Filter hallucinations
+- yap-b856: Press Enter after speech
 
 ## User Environment
 - macOS 26.2 (Tahoe)
 - Apple Silicon M4 MacBook Air, 16GB RAM
-- Uses `td` tool for tasks (PATH: `$HOME/.local/bin`)
-- Has AC unit causing noise - RMS VAD was triggering on it
+- Task tool: `td` at `$HOME/.local/bin`
 
-## Recent Commits
-- 6b5ec3e: MEMBANK: Document v2 success and next steps
-- dea9b12: Yappatron2: Working transcription with FluidAudio!
+## Git Log
+- 3d8fd95: 🚀 Real-time streaming transcription!
+- 6b5ec3e: MEMBANK: Document v2 success
+- dea9b12: Yappatron2: Working batch transcription
 - c383b9a: WIP: Swift-only rewrite with FluidAudio
