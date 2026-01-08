@@ -55,6 +55,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         inputSimulator = InputSimulator()
         audioCapture = AudioCapture()
         
+        // Request accessibility permission if we don't have it (only prompts once per install)
+        if !InputSimulator.hasAccessibilityPermission() {
+            _ = InputSimulator.requestAccessibilityPermissionIfNeeded()
+        }
+        
         setupStatusItem()
         setupOverlay()
         setupWebSocket()

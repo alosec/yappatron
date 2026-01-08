@@ -5,6 +5,34 @@ import Carbon.HIToolbox
 /// Simulates keyboard input and detects focused text fields
 class InputSimulator {
     
+    /// Check if we have accessibility permissions (does NOT prompt)
+    static func hasAccessibilityPermission() -> Bool {
+        return AXIsProcessTrusted()
+    }
+    
+    /// Request accessibility permission (prompts user once)
+    /// Returns true if already granted, false if prompt was shown
+    static func requestAccessibilityPermissionIfNeeded() -> Bool {
+        if AXIsProcessTrusted() {
+            return true
+        }
+        
+        // Check if we've already prompted this session
+        let hasPromptedKey = "hasPromptedForAccessibility"
+        if UserDefaults.standard.bool(forKey: hasPromptedKey) {
+            return false
+        }
+        
+        // Prompt the user
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        let result = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        
+        // Remember that we prompted
+        UserDefaults.standard.set(true, forKey: hasPromptedKey)
+        
+        return result
+    }
+    
     /// Type a single character
     func typeChar(_ char: String) {
         guard let char = char.first else { return }
