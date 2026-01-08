@@ -20,14 +20,59 @@ const { title } = Astro.props;
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
       :root {
-        --pink: #f472b6;
-        --pink-dim: #be185d;
+        --radius: 8px;
+        --text: #fafafa;
+        --text-dim: #888;
+      }
+
+      /* Themes */
+      [data-theme="sakura"] {
+        --accent: #f472b6;
+        --accent-dim: #be185d;
         --bg: #0f0f0f;
         --surface: #1a1a1a;
         --border: #2a2a2a;
-        --text: #fafafa;
-        --text-dim: #888;
-        --radius: 8px;
+      }
+
+      [data-theme="wisteria"] {
+        --accent: #a78bfa;
+        --accent-dim: #7c3aed;
+        --bg: #0d0d12;
+        --surface: #16161f;
+        --border: #252532;
+      }
+
+      [data-theme="peach"] {
+        --accent: #fb923c;
+        --accent-dim: #ea580c;
+        --bg: #0f0e0d;
+        --surface: #1a1917;
+        --border: #2a2825;
+      }
+
+      [data-theme="matcha"] {
+        --accent: #86efac;
+        --accent-dim: #22c55e;
+        --bg: #0d0f0d;
+        --surface: #171a17;
+        --border: #252a25;
+      }
+
+      [data-theme="frost"] {
+        --accent: #67e8f9;
+        --accent-dim: #06b6d4;
+        --bg: #0c0f12;
+        --surface: #141a1f;
+        --border: #1f2a32;
+      }
+
+      /* Default to sakura */
+      :root {
+        --accent: #f472b6;
+        --accent-dim: #be185d;
+        --bg: #0f0f0f;
+        --surface: #1a1a1a;
+        --border: #2a2a2a;
       }
 
       * {
@@ -204,7 +249,7 @@ const { title } = Astro.props;
       }
 
       .btn-primary {
-        background: var(--pink);
+        background: var(--accent);
         color: var(--bg);
       }
 
@@ -280,6 +325,43 @@ const { title } = Astro.props;
         margin-bottom: 0.25rem;
       }
 
+      /* Theme Picker */
+      .theme-picker {
+        position: fixed;
+        bottom: 1rem;
+        right: 1rem;
+        display: flex;
+        gap: 0.5rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 50px;
+        padding: 0.5rem;
+        z-index: 100;
+      }
+
+      .theme-btn {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        border: 2px solid transparent;
+        cursor: pointer;
+        transition: transform 0.15s, border-color 0.15s;
+      }
+
+      .theme-btn:hover {
+        transform: scale(1.15);
+      }
+
+      .theme-btn.active {
+        border-color: var(--text);
+      }
+
+      .theme-btn[data-theme="sakura"] { background: #f472b6; }
+      .theme-btn[data-theme="wisteria"] { background: #a78bfa; }
+      .theme-btn[data-theme="peach"] { background: #fb923c; }
+      .theme-btn[data-theme="matcha"] { background: #86efac; }
+      .theme-btn[data-theme="frost"] { background: #67e8f9; }
+
       /* Mobile */
       @media (max-width: 600px) {
         html {
@@ -322,9 +404,37 @@ const { title } = Astro.props;
       }
     </style>
   </head>
-  <body>
+  <body data-theme="sakura">
     <div class="container">
       <slot />
     </div>
+    
+    <div class="theme-picker">
+      <button class="theme-btn active" data-theme="sakura" title="Sakura"></button>
+      <button class="theme-btn" data-theme="wisteria" title="Wisteria"></button>
+      <button class="theme-btn" data-theme="peach" title="Peach"></button>
+      <button class="theme-btn" data-theme="matcha" title="Matcha"></button>
+      <button class="theme-btn" data-theme="frost" title="Frost"></button>
+    </div>
+
+    <script>
+      const buttons = document.querySelectorAll('.theme-btn');
+      const body = document.body;
+      
+      // Load saved theme
+      const saved = localStorage.getItem('theme') || 'sakura';
+      body.dataset.theme = saved;
+      buttons.forEach(btn => btn.classList.toggle('active', btn.dataset.theme === saved));
+      
+      // Handle clicks
+      buttons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const theme = btn.dataset.theme;
+          body.dataset.theme = theme;
+          localStorage.setItem('theme', theme);
+          buttons.forEach(b => b.classList.toggle('active', b === btn));
+        });
+      });
+    </script>
   </body>
 </html>
