@@ -3,9 +3,9 @@
   "tagline": "just yap.",
   "description": "always-on voice dictation for mac. no hotkeys. no toggles. just talk.",
   "badges": [
-    { "label": "MIT", "icon": "license" },
     { "label": "macOS", "icon": "apple" },
-    { "label": "local", "icon": "shield" }
+    { "label": "local", "icon": "shield" },
+    { "label": "free", "icon": "heart" }
   ],
   "features": [
     {
