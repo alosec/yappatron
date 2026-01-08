@@ -36,7 +36,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @Published var currentTypedText = "" // What we've typed so far (for backspace corrections)
     
     // Settings
-    var pressEnterAfterSpeech = false
+    var pressEnterAfterSpeech: Bool {
+        get { UserDefaults.standard.bool(forKey: "pressEnterAfterSpeech") }
+        set { UserDefaults.standard.set(newValue, forKey: "pressEnterAfterSpeech") }
+    }
     
     // Combine
     private var cancellables = Set<AnyCancellable>()
