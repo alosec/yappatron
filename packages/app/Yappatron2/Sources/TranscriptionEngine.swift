@@ -2,6 +2,15 @@ import Foundation
 import FluidAudio
 import AVFoundation
 import Combine
+import Accelerate
+
+// Simple print-based logging for debugging
+func log(_ message: String) {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm:ss.SSS"
+    print("[\(formatter.string(from: Date()))] [TranscriptionEngine] \(message)")
+    fflush(stdout)
+}
 
 /// Handles real-time speech-to-text using FluidAudio's Parakeet model
 class TranscriptionEngine: ObservableObject {
@@ -36,50 +45,84 @@ class TranscriptionEngine: ObservableObject {
     
     // Streaming transcription
     private var streamingTask: Task<Void, Never>?
-    private var lastProcessedSampleCount: Int = 0
-    private let chunkDurationSeconds: Double = 0.8 // Process every 800ms
     
     // Simple energy-based VAD
     private var speechStartTime: Date?
     private var lastSpeechTime: Date?
-    private let silenceTimeout: TimeInterval = 1.0 // 1 second of silence = end of speech
-    private let speechThreshold: Float = 0.01 // Energy threshold for speech detection
+    private let silenceTimeout: TimeInterval = 1.2 // 1.2 seconds of silence = end of speech
+    private let speechThreshold: Float = 0.015 // RMS threshold for speech detection (adjusted for typical room noise)
     
-    init() {}
+    init() {
+        log("TranscriptionEngine initialized")
+    }
+    
+    private func requestMicrophonePermission() async -> Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        log("Microphone auth status: \(status.rawValue)")
+        
+        switch status {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    log("Microphone permission result: \(granted)")
+                    continuation.resume(returning: granted)
+                }
+            }
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
     
     func start() async {
         await MainActor.run { status = .initializing }
+        log("Starting TranscriptionEngine...")
         
         do {
+            // Request microphone permission first
+            log("Requesting microphone permission...")
+            let granted = await requestMicrophonePermission()
+            if !granted {
+                await MainActor.run { status = .error("Microphone permission denied") }
+                log("Microphone permission denied")
+                return
+            }
+            log("Microphone permission granted")
+            
             // Download and load ASR models (English v2 for best accuracy)
             await MainActor.run { status = .downloadingModels }
-            NSLog("[TranscriptionEngine] Downloading models...")
+            log("Downloading models...")
             models = try await AsrModels.downloadAndLoad(version: .v2)
+            log("Models downloaded")
             
             // Initialize ASR Manager
-            NSLog("[TranscriptionEngine] Initializing ASR manager...")
+            log("Initializing ASR manager...")
             let manager = AsrManager(config: .default)
             try await manager.initialize(models: models!)
             asrManager = manager
+            log("ASR manager initialized")
             
             // Setup audio capture
-            try await setupAudioCapture()
+            try setupAudioCapture()
             
             await MainActor.run { status = .ready }
-            NSLog("[TranscriptionEngine] Ready")
+            log("TranscriptionEngine ready!")
             
         } catch {
             await MainActor.run { status = .error(error.localizedDescription) }
-            NSLog("[TranscriptionEngine] Error: %@", error.localizedDescription)
+            log("TranscriptionEngine error: \(error.localizedDescription)")
         }
     }
     
     func startListening() {
-        // Allow starting if ready OR already listening
         switch status {
         case .ready, .listening:
             break
         default:
+            log("Cannot start listening - status is \(String(describing: self.status))")
             return
         }
         
@@ -87,9 +130,10 @@ class TranscriptionEngine: ObservableObject {
             try audioEngine?.start()
             status = .listening
             startStreamingTranscription()
-            NSLog("[TranscriptionEngine] Listening started")
+            log("Listening started")
         } catch {
             status = .error(error.localizedDescription)
+            log("Failed to start audio engine: \(error.localizedDescription)")
         }
     }
     
@@ -98,10 +142,11 @@ class TranscriptionEngine: ObservableObject {
         streamingTask = nil
         audioEngine?.stop()
         status = .ready
-        NSLog("[TranscriptionEngine] Listening stopped")
+        log("Listening stopped")
     }
     
-    private func setupAudioCapture() async throws {
+    private func setupAudioCapture() throws {
+        log("Setting up audio capture...")
         audioEngine = AVAudioEngine()
         inputNode = audioEngine?.inputNode
         
@@ -111,67 +156,101 @@ class TranscriptionEngine: ObservableObject {
         }
         
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        log("Input format: \(inputFormat.channelCount) channels, \(inputFormat.sampleRate) Hz")
         
-        // FluidAudio expects 16kHz mono Float32
-        guard let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                                sampleRate: 16000,
-                                                channels: 1,
-                                                interleaved: false) else {
-            throw NSError(domain: "TranscriptionEngine", code: 2,
-                         userInfo: [NSLocalizedDescriptionKey: "Could not create target format"])
-        }
-        
-        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
-            throw NSError(domain: "TranscriptionEngine", code: 3,
-                         userInfo: [NSLocalizedDescriptionKey: "Could not create audio converter"])
-        }
-        
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self = self else { return }
-            
-            // Convert to 16kHz mono
-            let ratio = 16000.0 / inputFormat.sampleRate
-            let frameCount = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
-            
-            guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat,
-                                                          frameCapacity: frameCount) else { return }
-            
-            var error: NSError?
-            let status = converter.convert(to: convertedBuffer, error: &error) { inNumPackets, outStatus in
-                outStatus.pointee = .haveData
-                return buffer
-            }
-            
-            if status == .haveData || status == .inputRanDry {
-                guard let channelData = convertedBuffer.floatChannelData?[0] else { return }
-                let samples = Array(UnsafeBufferPointer(start: channelData, count: Int(convertedBuffer.frameLength)))
-                
-                // Thread-safe append to buffer
-                self.audioBufferLock.lock()
-                self.audioBuffer.append(contentsOf: samples)
-                self.audioBufferLock.unlock()
-                
-                // Check for speech using energy
-                let energy = samples.map { $0 * $0 }.reduce(0, +) / Float(samples.count)
-                if energy > self.speechThreshold {
-                    self.handleSpeechDetected()
-                }
-            }
+        // Install tap - we'll do our own resampling
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+            self?.handleAudioBuffer(buffer)
         }
         
         audioEngine?.prepare()
+        log("Audio capture setup complete")
+    }
+    
+    private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+        // Convert to mono 16kHz
+        let samples = toMono16k(buffer: buffer)
+        guard !samples.isEmpty else { return }
+        
+        // Calculate RMS for VAD
+        var sum: Float = 0
+        vDSP_svesq(samples, 1, &sum, vDSP_Length(samples.count))
+        let rms = sqrt(sum / Float(samples.count))
+        
+        // Log occasionally
+        if Int.random(in: 0..<30) == 0 {
+            log("Audio RMS: \(rms), threshold: \(speechThreshold), speaking: \(isSpeaking)")
+        }
+        
+        // Only accumulate audio when speaking
+        if rms > speechThreshold {
+            // Speech detected - accumulate samples and update timestamp
+            audioBufferLock.lock()
+            audioBuffer.append(contentsOf: samples)
+            audioBufferLock.unlock()
+            
+            handleSpeechDetected()
+        } else if isSpeaking {
+            // Below threshold but still in speech segment - accumulate for a bit
+            // (captures trailing audio)
+            audioBufferLock.lock()
+            audioBuffer.append(contentsOf: samples)
+            audioBufferLock.unlock()
+        }
+    }
+    
+    private func toMono16k(buffer: AVAudioPCMBuffer) -> [Float] {
+        guard let channelData = buffer.floatChannelData else { return [] }
+        let frameCount = Int(buffer.frameLength)
+        let channelCount = Int(buffer.format.channelCount)
+        let sourceSampleRate = buffer.format.sampleRate
+        
+        // Downmix to mono
+        var mono: [Float]
+        if channelCount == 1 {
+            mono = Array(UnsafeBufferPointer(start: channelData[0], count: frameCount))
+        } else {
+            mono = [Float](repeating: 0, count: frameCount)
+            for c in 0..<channelCount {
+                let src = channelData[c]
+                vDSP_vadd(src, 1, mono, 1, &mono, 1, vDSP_Length(frameCount))
+            }
+            var div = Float(channelCount)
+            vDSP_vsdiv(mono, 1, &div, &mono, 1, vDSP_Length(frameCount))
+        }
+        
+        // Resample to 16kHz if needed
+        if sourceSampleRate != 16000.0 {
+            let ratio = 16000.0 / sourceSampleRate
+            let outCount = Int(Double(mono.count) * ratio)
+            var output = [Float](repeating: 0, count: outCount)
+            
+            for i in 0..<outCount {
+                let srcPos = Double(i) / ratio
+                let idx = Int(srcPos)
+                let frac = Float(srcPos - Double(idx))
+                if idx + 1 < mono.count {
+                    output[i] = mono[idx] + (mono[idx + 1] - mono[idx]) * frac
+                } else if idx < mono.count {
+                    output[i] = mono[idx]
+                }
+            }
+            return output
+        }
+        
+        return mono
     }
     
     private func handleSpeechDetected() {
         let now = Date()
         
         if !isSpeaking {
-            // Speech started
             DispatchQueue.main.async { [weak self] in
                 self?.isSpeaking = true
                 self?.onSpeechStart?()
             }
             speechStartTime = now
+            log("Speech started")
         }
         
         lastSpeechTime = now
@@ -180,7 +259,7 @@ class TranscriptionEngine: ObservableObject {
     private func startStreamingTranscription() {
         streamingTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(0.8 * 1_000_000_000)) // 800ms
+                try? await Task.sleep(nanoseconds: UInt64(0.5 * 1_000_000_000)) // 500ms
                 await self?.processAudioChunk()
             }
         }
@@ -190,35 +269,41 @@ class TranscriptionEngine: ObservableObject {
         // Check for silence timeout (end of speech)
         if isSpeaking, let lastSpeech = lastSpeechTime {
             if Date().timeIntervalSince(lastSpeech) > silenceTimeout {
-                // Speech ended - transcribe accumulated audio
+                log("Speech ended (silence timeout)")
                 await transcribeAndEmit()
                 
                 await MainActor.run { [weak self] in
                     self?.isSpeaking = false
                     self?.onSpeechEnd?()
                 }
-                return
             }
         }
-        
-        // Don't process if not speaking
-        guard isSpeaking else { return }
     }
     
     private func transcribeAndEmit() async {
         // Get samples from buffer
         audioBufferLock.lock()
         let samples = audioBuffer
-        audioBuffer.removeAll()
+        audioBuffer.removeAll(keepingCapacity: true)
         audioBufferLock.unlock()
         
-        guard !samples.isEmpty else { return }
+        guard samples.count > 1600 else { // At least 100ms of audio
+            log("Not enough samples to transcribe: \(samples.count)")
+            return
+        }
+        
+        log("Transcribing \(samples.count) samples (\(Double(samples.count) / 16000.0) seconds)...")
         
         do {
-            guard let manager = asrManager else { return }
+            guard let manager = asrManager else {
+                log("ASR manager not initialized")
+                return
+            }
             
             let result = try await manager.transcribe(samples, source: .microphone)
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            log("Transcription: '\(text)' (confidence: \(result.confidence))")
             
             if !text.isEmpty {
                 await MainActor.run { [weak self] in
@@ -227,7 +312,7 @@ class TranscriptionEngine: ObservableObject {
             }
             
         } catch {
-            NSLog("[TranscriptionEngine] Transcription error: %@", error.localizedDescription)
+            log("Transcription error: \(error.localizedDescription)")
         }
     }
     
@@ -236,5 +321,6 @@ class TranscriptionEngine: ObservableObject {
         inputNode?.removeTap(onBus: 0)
         audioEngine = nil
         asrManager = nil
+        log("TranscriptionEngine cleaned up")
     }
 }
