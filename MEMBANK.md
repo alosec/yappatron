@@ -3,8 +3,8 @@
 ## Project Overview
 **Yappatron** - Open-source always-on voice dictation app. No hotkeys, no toggles - just talk and text streams into focused inputs.
 
-## Current Status: REAL-TIME STREAMING ACHIEVED 🎉🚀
-**THE HOLY GRAIL:** Words appear AS YOU SPEAK THEM. 160ms latency. Instant.
+## Current Status: STREAMING WORKS 🔥
+Real-time streaming transcription is **profoundly strong**. Words appear instantly as you speak. Core UX is exactly what we wanted.
 
 ## GitHub Repo
 https://github.com/alosec/yappatron
@@ -15,19 +15,30 @@ Swift (Yappatron2.app)
 ┌─────────────────────────────────────────────────┐
 │ AVFoundation mic (48kHz → 16kHz)                │
 │ StreamingEouAsrManager (160ms chunks)           │
-│   ├── partialCallback → ghost text (live)      │
-│   └── eouCallback → finalize on speech end     │
+│   ├── partialCallback → ghost text (instant!)   │
+│   └── eouCallback → finalize + Enter            │
 │ InputSimulator (backspace corrections)          │
 │ Menu bar UI + status bubble overlay             │
+│   └── Blue=listening, Green=done                │
 └─────────────────────────────────────────────────┘
 ```
 
-## Key Achievements
-- **160ms latency** - words appear as you speak
-- **EOU detection** - model knows when you stop talking (no manual VAD)
-- **AC noise immune** - EOU model ignores background noise
-- **Ghost text** - updates live with backspace corrections
-- **Pure Swift** - no Python, no WebSocket, single process
+## What's Working
+- ✅ **Instant streaming** - words appear as you speak (160ms latency)
+- ✅ **Ghost text** - updates live with backspace corrections
+- ✅ **Status bubble** - blue while speaking, green when done
+- ✅ **Press Enter on complete** - auto-sends when EOU detected
+- ✅ **Pure Swift** - no Python, no WebSocket, single process
+- ✅ **Neural Engine** - runs on ANE for efficiency
+
+## Known Issue: EOU Timing (yap-ddf5)
+The End-of-Utterance detection can hang for 5-7 seconds after speech ends. Root cause: the model intermittently produces tokens during silence, which resets the 800ms debounce timer. This is a FluidAudio model behavior, not easily fixable on our end.
+
+**Attempted fixes that caused regressions:**
+- Silero VAD as gate → race conditions, worse behavior
+- Lowering debounce → cuts off speech mid-sentence
+
+**The 800ms debounce is correct** - shorter would cause false triggers during natural pauses.
 
 ## Key Files
 ```
@@ -35,8 +46,8 @@ Swift (Yappatron2.app)
 ├── Package.swift                 # FluidAudio + HotKey deps
 └── Sources/
     ├── YappatronApp.swift        # Main app, menu bar, hotkeys
-    ├── TranscriptionEngine.swift # StreamingEouAsrManager integration
-    ├── InputSimulator.swift      # CGEvent + ghost text updates
+    ├── TranscriptionEngine.swift # StreamingEouAsrManager
+    ├── InputSimulator.swift      # CGEvent + ghost text
     └── OverlayWindow.swift       # Status bubble UI
 ```
 
@@ -52,7 +63,7 @@ codesign --force --deep --sign - /Applications/Yappatron2.app
 # Run (in tmux)
 tmux new-session -d -s yappatron '/Applications/Yappatron2.app/Contents/MacOS/Yappatron 2>&1 | tee /tmp/yappatron.log'
 
-# Watch
+# Watch logs
 tail -f /tmp/yappatron.log
 
 # Kill
@@ -62,29 +73,30 @@ pkill -9 -f Yappatron
 export PATH="$HOME/.local/bin:$PATH" && td list
 ```
 
-## Technical Details
+## Technical Notes
 
 ### StreamingEouAsrManager
-- **Chunk size:** 160ms (2560 samples at 16kHz)
-- **EOU debounce:** 800ms silence to confirm end
+- **Chunk size:** 160ms (2560 samples)
+- **EOU debounce:** 800ms (in FluidAudio code)
 - **Model:** parakeet-realtime-eou-120m-coreml
-- **Callbacks:** partialCallback (live updates), eouCallback (finalize)
+- **Issue:** Model produces tokens during silence, resetting debounce
 
 ### Ghost Text Flow
-1. partialCallback fires with new text
-2. InputSimulator.applyTextUpdate() calculates diff
-3. Backspaces delete divergent suffix
-4. Types new suffix
-5. Result: seamless live updates
+1. partialCallback fires with updated text
+2. InputSimulator.applyTextUpdate() diffs old vs new
+3. Backspaces delete divergent suffix, types new suffix
+4. Result: seamless live updates
 
 ### Models Location
 ```
 ~/Library/Application Support/FluidAudio/Models/
-├── parakeet-eou-streaming/160ms/  # Streaming models
-└── parakeet-tdt-0.6b-v2-coreml/   # Batch models (unused now)
+├── parakeet-eou-streaming/160ms/   # Streaming models (in use)
+├── silero-vad-coreml/              # VAD (downloaded, not used)
+└── parakeet-tdt-0.6b-v2-coreml/    # Batch models (not used)
 ```
 
-## Remaining Tasks (Backlog)
+## Open Issues
+- **yap-ddf5** (bug): EOU detection hangs 5-7 seconds sometimes
 - yap-d192: Website deployment
 - yap-d958: Custom vocabulary
 - yap-8e8b: App notarization
@@ -102,8 +114,11 @@ export PATH="$HOME/.local/bin:$PATH" && td list
 - Apple Silicon M4 MacBook Air, 16GB RAM
 - Task tool: `td` at `$HOME/.local/bin`
 
+## Session Summary (Jan 7, 2026)
+Started with slow Python+Whisper batch transcription. Ended with instant real-time streaming via FluidAudio's StreamingEouAsrManager. The core UX is "profoundly strong" - words appear as you speak them. EOU timing needs work but the foundation is solid.
+
 ## Git Log
+- 15f23fa: MEMBANK: Document real-time streaming achievement
 - 3d8fd95: 🚀 Real-time streaming transcription!
-- 6b5ec3e: MEMBANK: Document v2 success
 - dea9b12: Yappatron2: Working batch transcription
 - c383b9a: WIP: Swift-only rewrite with FluidAudio
