@@ -3,180 +3,133 @@
 ## Project Overview
 **Yappatron** - Open-source always-on voice dictation app (Wispr Flow replacement). No hotkeys, no toggles - just talk and text streams into focused inputs.
 
-## Current Status: WORKING ✅
-MVP functional. Audio → VAD → Whisper → Text → Type into focused input.
+## Current Status: WORKING v2 ✅ 🎉
+**Major milestone achieved!** Pure Swift implementation with FluidAudio is working:
+- Parakeet TDT v2 transcription with 92-98% confidence
+- ~85-100ms transcription latency after speech ends
+- No Python, no WebSocket, no subprocess
+- Runs on Apple Neural Engine
 
 ## GitHub Repo
 https://github.com/alosec/yappatron
 
-## Architecture
+## Architecture (v2 - Current)
 ```
-Swift (Yappatron.app)              Python Engine
-┌──────────────────────┐           ┌──────────────────────┐
-│ AVFoundation mic     │──audio──► │ Silero VAD           │
-│ Menu bar UI          │  (WS)     │ faster-whisper       │
-│ Floating overlay     │◄──text─── │ Speaker ID (optional)│
-│ Keystroke simulation │           │                      │
-└──────────────────────┘           └──────────────────────┘
+Swift (Yappatron2.app) - EVERYTHING IN ONE PROCESS
+┌─────────────────────────────────────────────────┐
+│ AVFoundation mic (48kHz)                        │
+│ vDSP resampling to 16kHz mono                   │
+│ RMS-based speech detection (threshold: 0.015)  │
+│ FluidAudio ASR (Parakeet TDT v2 on ANE)        │
+│ CGEvent keystrokes                              │
+│ Menu bar UI + status bubble overlay             │
+└─────────────────────────────────────────────────┘
 ```
 
-- **WebSocket port**: 9876
-- **Audio format**: 16kHz mono float32, base64 encoded chunks
-- **Model**: `small` by default (~500MB)
-
-## Key Insights & Gotchas
-
-### Accessibility Permissions (CRITICAL)
-- `AXIsProcessTrusted()` returns false when binary changes inside app bundle
-- macOS ties accessibility permission to **code signature hash**
-- **After every build**: must re-sign app AND user must re-grant permission
-- Debug binary (`.build/debug/Yappatron`) vs app bundle (`/Applications/Yappatron.app`) are **separate apps** for permissions
-- Fix workflow:
-  ```bash
-  # After building, re-sign:
-  codesign --force --deep --sign - /Applications/Yappatron.app
-  # Then user must: System Settings > Privacy & Security > Accessibility
-  # Remove and re-add Yappatron.app
-  ```
-
-### Engine Management
-- EngineManager spawns Python subprocess
-- App checks if engine already running (port 9876) before starting another
-- Stale engine processes can cause conflicts - always clean kill before testing
-
----
-
-## Real-Time Streaming Transcription Research (Jan 2026)
-
-### The UX Goal
-Words appearing in real-time as you speak (like Aqua Voice), not batch processing after speech ends.
-
-### The Core Constraint
-We can only "paste" via CGEvent keystrokes - can't edit text already typed. Once a character is sent, it's sent.
-
-### The Problem with Naive Streaming + Live Paste
-- Streaming models emit *provisional* text that changes as context arrives
-- "I want to" → "I want to go" → "I want to go home"
-- If we paste immediately, we can't un-paste when model refines
-
-### Possible Approaches
-
-1. **Aqua Voice style:** Stream words to bubble in real-time, but only paste on trigger (silence detected or hotkey release). User sees live preview, paste is "committed" version.
-
-2. **Aggressive streaming with backspace corrections:** Paste words as they're confirmed, use backspace to correct when model refines. Could be glitchy but would be an amazing party trick if smooth.
-
-3. **Hybrid:** Show streaming preview in bubble, paste batches every N words once stable.
-
-### Best Open Source STT Models (2026 Benchmarks)
-
-| Model | WER | RTFx (Speed) | Params | Use Case |
-|-------|-----|--------------|--------|----------|
-| **Canary Qwen 2.5B** | 5.63% | 418x | 2.5B | Max accuracy (English) |
-| **IBM Granite Speech 3.3 8B** | 5.85% | - | ~9B | Enterprise English |
-| **Whisper Large V3** | 7.4% | varies | 1.55B | Multilingual (99+ langs) |
-| **Whisper Large V3 Turbo** | 7.75% | 216x | 809M | Fast multilingual |
-| **Distil-Whisper** | ~7.4% | 6x Whisper | 756M | Fast English |
-| **Parakeet TDT 1.1B** | ~8% | **>2000x** | 1.1B | **Ultra low-latency streaming** |
-| **Moonshine** | varies | fast | 27M | Edge/mobile |
-
-**WER** = Word Error Rate (lower = more accurate). 5% = 1 error per 20 words.
-**RTFx** = Real-Time Factor (higher = faster). 2000x = processes 33 min of audio in 1 second.
-
-### Top Candidates for Real-Time Streaming
-
-1. **Parakeet TDT** (NVIDIA) - RTFx >2000, RNN-Transducer architecture enables streaming with minimal latency. Purpose-built for live captioning. Trade-off: 23rd in accuracy.
-
-2. **Moonshine** - 27M params, designed for edge devices, has live captions demo. 5-15x faster than Whisper. Last commit Nov 2025.
-
-3. **Distil-Whisper** - 6x faster than Whisper, stays in Whisper ecosystem. English only.
-
-### Likely Implementation Plan
-- Keep Whisper as "high quality" batch option
-- Add Parakeet TDT or Moonshine for real-time streaming
-- Aggressive streaming approach: paste words as confident, backspace to correct
-- This would be the differentiating "party trick" feature
-
----
-
-## Key File Paths
+## Key Files (v2)
 ```
 /Users/alex/Workspace/yappatron/
-├── packages/core/yappatron/
-│   ├── main.py          # Python entry - VAD, transcription, WebSocket
-│   ├── server.py        # WebSocket server
-│   ├── transcribe.py    # faster-whisper wrapper
-│   └── vocabulary.py    # Custom vocabulary
-├── packages/app/Yappatron/Sources/
-│   ├── YappatronApp.swift      # Main app delegate
-│   ├── AudioCapture.swift      # AVFoundation mic
-│   ├── WebSocketClient.swift   # Connects to Python
-│   ├── EngineManager.swift     # Spawns Python subprocess
-│   ├── InputSimulator.swift    # CGEvent keystrokes + accessibility
-│   ├── OverlayWindow.swift     # Floating bubble UI
-│   └── Settings.swift          # Settings UI
-├── .venv/                       # Python 3.12 venv
-└── MEMBANK.md                   # This file
+├── packages/app/Yappatron2/          # NEW - Pure Swift version
+│   ├── Package.swift                 # FluidAudio + HotKey deps
+│   └── Sources/
+│       ├── YappatronApp.swift        # Main app, menu bar, hotkeys
+│       ├── TranscriptionEngine.swift # Audio capture + ASR
+│       ├── InputSimulator.swift      # CGEvent keystrokes
+│       └── OverlayWindow.swift       # Status bubble UI
+├── packages/app/Yappatron/           # OLD - Python/WebSocket version
+├── packages/core/yappatron/          # OLD - Python engine
+└── MEMBANK.md
 ```
 
-## Commands
+## Commands (v2)
 ```bash
 # Build
-cd ~/Workspace/yappatron/packages/app/Yappatron && swift build
+cd ~/Workspace/yappatron/packages/app/Yappatron2 && swift build
 
-# Update app bundle (MUST re-sign after!)
-cp .build/debug/Yappatron /Applications/Yappatron.app/Contents/MacOS/
-codesign --force --deep --sign - /Applications/Yappatron.app
+# Update app bundle
+cp .build/debug/Yappatron /Applications/Yappatron2.app/Contents/MacOS/
+codesign --force --deep --sign - /Applications/Yappatron2.app
 
-# Launch
-open /Applications/Yappatron.app
+# Run with logging (in tmux!)
+tmux new-session -d -s yappatron '/Applications/Yappatron2.app/Contents/MacOS/Yappatron 2>&1 | tee /tmp/yappatron.log'
 
-# Kill all
-pkill -9 -f yappatron; pkill -9 -f Yappatron
+# Watch logs
+tail -f /tmp/yappatron.log
 
-# View engine log
-tail -f ~/.yappatron/engine.log
+# Kill
+pkill -9 -f Yappatron
 
-# Task management
+# Tasks
 cd ~/Workspace/yappatron && export PATH="$HOME/.local/bin:$PATH" && td list
 ```
 
-## User Environment
-- macOS 15.6 Sequoia (upgrading to macOS 26 for Liquid Glass)
-- Apple Silicon M4 MacBook Air, 16GB RAM
-- Uses `td` tool for tasks (PATH: `$HOME/.local/bin`)
+## User Feedback (Jan 7, 2026)
+- "This is shockingly great"
+- "This is definitely a major improvement"
+- "I'm already sold - this is so much better"
+- "The coolest thing is the visual bubble showing status"
+- BUT: Still chunk-based, not real-time streaming
+- INSIGHT: If batch processing, paste whole chunk at once (char-by-char streaming is artificial delay)
 
-## Open Tasks (11)
+## Key Technical Insights
+
+### Audio Pipeline
+- Input: 48kHz mono from MacBook Air mic
+- Resampling: vDSP-based linear interpolation to 16kHz (like FluidVoice does)
+- VAD: Simple RMS threshold (0.015) - room noise is ~0.009-0.01
+- Silence timeout: 1.2 seconds triggers end of speech
+
+### FluidAudio Integration
+- Uses `AsrModels.downloadAndLoad(version: .v2)` for English-only model
+- `AsrManager.transcribe(samples, source: .microphone)` for batch transcription
+- Models cached at `~/Library/Application Support/FluidAudio/Models/`
+- Runs on cpuAndNeuralEngine compute units
+
+### Chunk vs Streaming Transcription
+**Current (Chunk/Batch):**
+1. Accumulate audio while speaking
+2. Detect silence (1.2s timeout)
+3. Transcribe entire buffer at once
+4. Paste result
+
+**Goal (Real-time Streaming):**
+1. Transcribe incrementally as audio arrives
+2. Words appear as you speak them
+3. May need to backspace/correct as context changes
+4. FluidAudio has `StreamingEouAsrManager` for this
+
+### Paste Strategy
+- Current: char-by-char with 2ms delay (feels slow)
+- Should do: paste whole chunk at once for batch mode
+- Future: word-by-word streaming for real-time mode
+
+## Open Tasks (13)
 - yap-d192: Website deployment
-- yap-d958: Feature: Custom vocabulary UI  
+- yap-d958: Feature: Custom vocabulary
 - yap-8e8b: Feature: App notarization
 - yap-0f5a: Polish: Error handling
 - yap-94a6: Polish: First-run experience
-- yap-dec5: UI: Liquid glass overlay style (waiting for macOS 26)
+- yap-dec5: UI: Liquid glass overlay style (needs macOS 26)
 - yap-19b3: UI: Bottom bar ticker mode
-- yap-3ed9: Core: Real-time streaming transcription
+- yap-3ed9: Core: Real-time streaming transcription ⭐ (the holy grail)
 - yap-12d5: UI: Fix overlay text scroll to end
 - yap-0e4f: UI: Bubble as status-only when input focused
 - yap-6b90: Core: Filter Whisper hallucinations
 - yap-b856: Feature: Press Enter after speech
+- yap-9724: Perf: Paste whole chunk instead of char-by-char
 
-## Git Commits
+## Next Steps
+1. **Quick win:** Paste whole chunk at once (yap-9724) - remove artificial char-by-char delay
+2. **Holy grail:** Real-time streaming with `StreamingEouAsrManager` (yap-3ed9)
+3. **Polish:** Reduce silence timeout, tune RMS threshold
+
+## User Environment
+- macOS 26.2 (Sequoia successor)
+- Apple Silicon M4 MacBook Air, 16GB RAM
+- Uses `td` tool for tasks (PATH: `$HOME/.local/bin`)
+
+## Git History
+- dea9b12: Yappatron2: Working transcription with FluidAudio!
+- c383b9a: WIP: Swift-only rewrite with FluidAudio
+- ee84801: MEMBANK: Add real-time streaming research
 - 6fc6b6b: Update MEMBANK with accessibility insights
-- ddd5a6a: Fix paste - accessibility permission tied to app bundle signature
-- 5122021: Add proper accessibility permission handling
-- 6ef5079: Initial commit - MVP
-
-## What's Working
-- ✅ Audio capture (Swift AVFoundation)
-- ✅ VAD + Whisper transcription (Python)
-- ✅ WebSocket communication
-- ✅ Text typing into focused inputs
-- ✅ Overlay bubble (shows pending/sent text)
-- ✅ Menu bar with status icons
-- ✅ Settings UI (model selection)
-- ✅ Keyboard shortcuts (undo, pause, toggle overlay)
-- ✅ Accessibility permission handling (prompts once)
-
-## Known Issues
-- Overlay text doesn't scroll to end properly (shows middle)
-- Transcription is batch (waits for speech end) not real-time streaming
-- Whisper occasionally hallucinates (e.g., "bye bye bye bye")
