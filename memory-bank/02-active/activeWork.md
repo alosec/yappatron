@@ -1,20 +1,23 @@
 # Active Work
 
-**Last Updated:** 2026-01-08 10:15 UTC
+**Last Updated:** 2026-01-08 11:05 UTC
 
 ## Current Focus
 
-Website deployed. Core app works but has race condition crash.
+Website redesigned with editorial aesthetic. Core app works but has race condition crash.
 
 ### What's Done
 - ✅ Swift rewrite with FluidAudio streaming
 - ✅ 160ms real-time transcription
 - ✅ Ghost text with diff-based corrections
 - ✅ Website deployed to yappatron.pages.dev
-- ✅ Sakura styling
+- ✅ Editorial redesign: Newsreader serif, breathing animation, light/dark mode
+- ✅ Content loaded from JSON at build time
+- ✅ Theme picker: mist, lotus, ember, moss, depth
 
 ### In Progress
 - 🔄 Race condition crash (P0) — see [blockers](blockers.md)
+- 🔄 Website polish (awaiting feedback)
 
 ### Next
 - [ ] Fix race condition (actor isolation or upstream)
