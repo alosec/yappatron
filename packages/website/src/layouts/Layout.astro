@@ -11,328 +11,320 @@ const { title } = Astro.props;
   <head>
     <meta charset="UTF-8" />
     <meta name="description" content="Yappatron - Open-source always-on voice dictation. No hotkeys, no toggles—just yap." />
-    <meta name="viewport" content="width=device-width" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="generator" content={Astro.generator} />
     <title>{title}</title>
-    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
       :root {
-        /* Sakura-inspired palette */
-        --sakura-50: #fdf2f8;
-        --sakura-100: #fce7f3;
-        --sakura-200: #fbcfe8;
-        --sakura-300: #f9a8d4;
-        --sakura-400: #f472b6;
-        --sakura-500: #ec4899;
-        --sakura-600: #db2777;
-        --blossom: #ffb7c5;
-        --petal: #ffc0cb;
-        --branch: #8b4513;
-        
-        --bg: #fffbfc;
-        --bg-alt: #fff5f7;
-        --text: #1f1f1f;
-        --text-muted: #6b6b6b;
-        --accent: var(--sakura-500);
-        --accent-soft: var(--sakura-100);
+        --pink: #f472b6;
+        --pink-dim: #be185d;
+        --bg: #0f0f0f;
+        --surface: #1a1a1a;
+        --border: #2a2a2a;
+        --text: #fafafa;
+        --text-dim: #888;
+        --radius: 8px;
       }
-      
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --bg: #1a1118;
-          --bg-alt: #251a20;
-          --text: #f5f0f2;
-          --text-muted: #a89a9e;
-          --accent: var(--sakura-400);
-          --accent-soft: rgba(244, 114, 182, 0.15);
-        }
-      }
-      
+
       * {
         box-sizing: border-box;
         margin: 0;
         padding: 0;
       }
-      
+
       html {
-        font-size: 18px;
-        scroll-behavior: smooth;
+        font-size: 17px;
+        -webkit-font-smoothing: antialiased;
       }
-      
+
       body {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: 'Space Grotesk', system-ui, sans-serif;
         background: var(--bg);
         color: var(--text);
-        line-height: 1.7;
-        max-width: 720px;
-        margin: 0 auto;
-        padding: 2rem 1.5rem;
-        position: relative;
+        line-height: 1.6;
         min-height: 100vh;
+        padding: 2rem 1rem;
       }
-      
-      /* Floating sakura petals background */
-      body::before {
-        content: "🌸";
-        position: fixed;
-        top: 10%;
-        left: 5%;
-        font-size: 2rem;
-        opacity: 0.15;
-        animation: float 20s ease-in-out infinite;
-        pointer-events: none;
+
+      .container {
+        max-width: 640px;
+        margin: 0 auto;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 3rem 2.5rem;
       }
-      body::after {
-        content: "🌸";
-        position: fixed;
-        top: 60%;
-        right: 8%;
-        font-size: 1.5rem;
-        opacity: 0.1;
-        animation: float 25s ease-in-out infinite reverse;
-        pointer-events: none;
+
+      main {
+        
       }
-      
-      @keyframes float {
-        0%, 100% { transform: translateY(0) rotate(0deg); }
-        50% { transform: translateY(-20px) rotate(10deg); }
-      }
-      
+
       h1, h2, h3 {
         font-weight: 600;
-        line-height: 1.3;
-        margin-top: 2.5rem;
-        margin-bottom: 1rem;
+        line-height: 1.2;
       }
-      
-      h1 { font-size: 2.5rem; margin-top: 0; }
-      h2 { font-size: 1.6rem; color: var(--accent); }
-      h3 { font-size: 1.2rem; }
-      
+
+      h1 {
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+      }
+
+      h2 {
+        font-size: 1.25rem;
+        color: var(--pink);
+        margin: 3rem 0 1rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      h3 {
+        font-size: 1rem;
+        margin: 1.5rem 0 0.5rem;
+      }
+
       p {
         margin-bottom: 1rem;
-        color: var(--text);
+        color: var(--text-dim);
       }
-      
+
       a {
-        color: var(--accent);
+        color: var(--pink);
         text-decoration: none;
-        border-bottom: 1px solid transparent;
-        transition: border-color 0.2s;
       }
+
       a:hover {
-        border-bottom-color: var(--accent);
+        text-decoration: underline;
       }
-      
+
       strong {
-        font-weight: 600;
-        color: var(--accent);
+        color: var(--text);
+        font-weight: 500;
       }
-      
+
       hr {
         border: none;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, var(--sakura-200), transparent);
+        border-top: 1px solid var(--border);
         margin: 3rem 0;
       }
-      
+
       ul, ol {
-        margin: 1rem 0 1.5rem 1.5rem;
+        margin: 0 0 1.5rem 1.25rem;
+        color: var(--text-dim);
       }
+
       li {
         margin-bottom: 0.5rem;
       }
-      
+
+      li strong {
+        color: var(--pink);
+      }
+
       blockquote {
-        border-left: 3px solid var(--sakura-300);
-        padding-left: 1.5rem;
+        border-left: 2px solid var(--pink);
+        padding-left: 1rem;
         margin: 1.5rem 0;
+        color: var(--text-dim);
         font-style: italic;
-        color: var(--text-muted);
       }
-      
+
       code {
-        font-family: 'SF Mono', 'Fira Code', monospace;
-        font-size: 0.85rem;
-        background: var(--accent-soft);
-        padding: 0.15rem 0.4rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.85em;
+        background: var(--surface);
+        padding: 0.2em 0.4em;
         border-radius: 4px;
-        color: var(--accent);
+        color: var(--pink);
       }
-      
+
       pre {
-        background: var(--bg-alt);
-        border: 1px solid var(--sakura-200);
-        border-radius: 12px;
-        padding: 1.25rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1rem;
         overflow-x: auto;
-        margin: 1.5rem 0;
+        margin: 1rem 0 1.5rem;
       }
-      
+
       pre code {
-        background: transparent;
+        background: none;
         padding: 0;
-        color: var(--text);
+        color: var(--text-dim);
+        font-size: 0.8rem;
       }
-      
-      @media (prefers-color-scheme: dark) {
-        pre {
-          border-color: var(--sakura-400);
-          border-opacity: 0.2;
-        }
-      }
-      
+
       /* Hero */
       .hero {
         text-align: center;
-        padding: 3rem 0 2rem;
+        padding: 2rem 0 1rem;
       }
-      
+
       .hero h1 {
-        font-size: 3.5rem;
-        background: linear-gradient(135deg, var(--sakura-500), var(--sakura-400));
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin-bottom: 0.25rem;
+        color: var(--text);
       }
-      
+
+      .hero h1 span {
+        color: var(--pink);
+      }
+
       .tagline {
-        font-size: 1.75rem;
-        font-weight: 500;
-        color: var(--text-muted);
-        margin-bottom: 1rem;
+        font-size: 1.5rem;
+        color: var(--text);
+        margin-bottom: 0.5rem;
       }
-      
-      .hero > p {
-        color: var(--text-muted);
+
+      .hero p {
         font-size: 1.1rem;
-        margin-bottom: 2rem;
       }
-      
-      /* CTAs */
-      .cta {
+
+      .buttons {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: center;
+        margin-top: 1.5rem;
+        flex-wrap: wrap;
+      }
+
+      .btn {
         display: inline-block;
-        padding: 0.8rem 1.75rem;
-        border-radius: 50px;
-        font-weight: 600;
+        padding: 0.75rem 1.5rem;
+        border-radius: var(--radius);
+        font-weight: 500;
         font-size: 0.95rem;
-        margin: 0.4rem;
-        transition: all 0.2s ease;
-        border: none;
+        transition: opacity 0.15s;
       }
-      
-      .cta:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 20px rgba(236, 72, 153, 0.3);
-        border-bottom-color: transparent;
+
+      .btn:hover {
+        text-decoration: none;
+        opacity: 0.85;
       }
-      
-      .cta:not(.secondary) {
-        background: linear-gradient(135deg, var(--sakura-500), var(--sakura-400));
-        color: white;
+
+      .btn-primary {
+        background: var(--pink);
+        color: var(--bg);
       }
-      
-      .cta.secondary {
-        background: var(--accent-soft);
-        color: var(--accent);
+
+      .btn-secondary {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text);
       }
-      
+
       /* Features */
       .features {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 1.25rem;
-        margin: 2rem 0;
+        gap: 1px;
+        background: var(--border);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        margin: 1.5rem 0;
       }
-      
+
       .feature {
-        padding: 1.5rem;
-        border-radius: 16px;
-        background: var(--bg-alt);
-        border: 1px solid var(--sakura-100);
-        transition: transform 0.2s, box-shadow 0.2s;
+        background: var(--surface);
+        padding: 1.25rem;
       }
-      
-      .feature:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 30px rgba(236, 72, 153, 0.1);
-      }
-      
-      @media (prefers-color-scheme: dark) {
-        .feature {
-          border-color: rgba(244, 114, 182, 0.1);
-        }
-      }
-      
+
       .feature h3 {
-        margin-top: 0;
-        margin-bottom: 0.5rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-      }
-      
-      .feature p {
-        color: var(--text-muted);
+        margin: 0 0 0.25rem;
         font-size: 0.95rem;
-        margin-bottom: 0;
+        color: var(--text);
       }
-      
-      /* Demo terminal */
-      .demo {
-        background: #1e1e2e;
-        color: #cdd6f4;
-        padding: 1.5rem;
-        border-radius: 12px;
-        font-family: 'SF Mono', 'Fira Code', monospace;
-        font-size: 0.85rem;
-        margin: 2rem 0;
-        border: 1px solid #313244;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+
+      .feature p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-dim);
       }
-      
-      .demo p {
-        margin-bottom: 0.25rem;
-        color: #cdd6f4;
+
+      /* Terminal */
+      .terminal {
+        background: #0d0d0d;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8rem;
+        margin: 1.5rem 0;
+        overflow-x: auto;
       }
-      
-      .demo .prompt {
-        color: var(--sakura-400);
+
+      .terminal p {
+        margin: 0;
+        color: var(--text-dim);
+        white-space: pre;
       }
-      
-      .demo .output {
-        color: #a6e3a1;
+
+      .terminal .prompt {
+        color: var(--pink);
       }
-      
+
+      .terminal .output {
+        color: #4ade80;
+      }
+
       /* Footer */
       footer {
         text-align: center;
-        margin-top: 4rem;
         padding: 2rem 0;
-        color: var(--text-muted);
-        font-size: 0.9rem;
+        color: var(--text-dim);
+        font-size: 0.85rem;
       }
-      
+
       footer p {
-        margin-bottom: 0.5rem;
-        color: var(--text-muted);
+        margin-bottom: 0.25rem;
       }
-      
-      /* Responsive */
+
+      /* Mobile */
       @media (max-width: 600px) {
-        html { font-size: 16px; }
-        .hero h1 { font-size: 2.5rem; }
-        .tagline { font-size: 1.3rem; }
-        .features { grid-template-columns: 1fr; }
+        html {
+          font-size: 16px;
+        }
+
+        body {
+          padding: 1rem 0.75rem;
+        }
+
+        .container {
+          padding: 2rem 1.25rem;
+          border-radius: 12px;
+        }
+
+        h1 {
+          font-size: 2rem;
+        }
+
+        .tagline {
+          font-size: 1.25rem;
+        }
+
+        .buttons {
+          flex-direction: column;
+        }
+
+        .btn {
+          width: 100%;
+          text-align: center;
+        }
+
+        h2 {
+          margin-top: 2rem;
+        }
+
+        .terminal {
+          font-size: 0.7rem;
+        }
       }
     </style>
   </head>
   <body>
-    <slot />
+    <div class="container">
+      <slot />
+    </div>
   </body>
 </html>

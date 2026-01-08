@@ -2,125 +2,84 @@
 import Layout from '../layouts/Layout.astro';
 ---
 
-<Layout title="Yappatron - Just Yap">
+<Layout title="Yappatron">
   <main>
     <div class="hero">
-      <h1>🎤 Yappatron</h1>
+      <h1><span>🌸</span> Yappatron</h1>
       <p class="tagline">Just yap.</p>
-      <p>Open-source always-on voice dictation.<br/>No hotkeys. No toggles. Just talk.</p>
-      <div>
-        <a href="https://github.com/alosec/yappatron" class="cta">Get Started</a>
-        <a href="#how-it-works" class="cta secondary">Learn More</a>
+      <p>Always-on voice dictation for macOS.<br/>No hotkeys. No toggles. Just talk.</p>
+      <div class="buttons">
+        <a href="https://github.com/alosec/yappatron" class="btn btn-primary">View on GitHub</a>
+        <a href="#install" class="btn btn-secondary">Get Started</a>
       </div>
     </div>
 
     <hr />
 
-    <h2>Why Yappatron?</h2>
-    <p>
-      Current dictation apps make you push buttons. Hold a key. Toggle on and off.
-      That's not how talking works. <strong>Yappatron just listens.</strong>
-    </p>
-
+    <h2>Features</h2>
+    
     <div class="features">
       <div class="feature">
-        <h3>🔊 Always On</h3>
-        <p>No push-to-talk. No toggle. Start talking and your words appear. Stop talking and... nothing happens. It just waits.</p>
+        <h3>🔊 Always Listening</h3>
+        <p>No push-to-talk. Start talking, words appear. Stop talking, it waits.</p>
       </div>
       <div class="feature">
-        <h3>⚡ Real-time Streaming</h3>
-        <p>Characters appear as you speak. Like watching yourself think onto the screen.</p>
+        <h3>⚡ 160ms Latency</h3>
+        <p>Real-time streaming. Characters appear as you speak.</p>
       </div>
       <div class="feature">
         <h3>🔒 Fully Local</h3>
-        <p>All processing happens on your machine. No cloud. No data leaving your computer. Ever.</p>
+        <p>All processing on-device. No cloud. No data leaves your machine.</p>
       </div>
       <div class="feature">
-        <h3>🎯 Knows Your Voice</h3>
-        <p>Speaker identification means only YOU can dictate. Someone walks up? They can't hijack your input.</p>
-      </div>
-      <div class="feature">
-        <h3>🧠 Context Aware</h3>
-        <p>Text input focused? Stream right into it. Nothing focused? Collect in a floating bubble.</p>
-      </div>
-      <div class="feature">
-        <h3>📖 Custom Vocabulary</h3>
-        <p>Add your own words, names, acronyms. Yappatron learns how you talk.</p>
+        <h3>🧠 Neural Engine</h3>
+        <p>Runs on Apple Silicon ANE. Efficient, not draining your battery.</p>
       </div>
     </div>
 
     <hr />
 
-    <h2 id="how-it-works">How It Works</h2>
+    <h2>How It Works</h2>
     
-    <div class="demo">
-      <p><span class="prompt">$</span> yappatron</p>
-      <p>Loading Whisper model 'base'...</p>
-      <p>Model loaded.</p>
-      <p>==================================================</p>
-      <p>YAPPATRON - Just yap!</p>
-      <p>==================================================</p>
+    <div class="terminal">
+      <p><span class="prompt">~</span> yappatron</p>
+      <p>Loading parakeet-eou-120m...</p>
+      <p>Listening...</p>
       <p></p>
-      <p>Listening... (Ctrl+C to stop)</p>
-      <p></p>
-      <p>[Speaking...] <span class="output">Hello world this is me just talking naturally</span> [Done]</p>
+      <p>[speaking] <span class="output">Hello world this is me talking naturally</span></p>
+      <p>[done ↵]</p>
     </div>
 
     <ol>
-      <li><strong>Voice Activity Detection</strong> — Silero VAD detects when you start speaking</li>
-      <li><strong>Speaker Verification</strong> — Optional check that it's actually you</li>
-      <li><strong>Streaming Transcription</strong> — Whisper transcribes in real-time</li>
-      <li><strong>Smart Output</strong> — Text streams to focused input or floating bubble</li>
+      <li><strong>Mic capture</strong> — AVFoundation grabs audio, resamples to 16kHz</li>
+      <li><strong>Streaming ASR</strong> — 160ms chunks fed to Parakeet model on Neural Engine</li>
+      <li><strong>Ghost text</strong> — Partials stream into focused input with live corrections</li>
+      <li><strong>End of utterance</strong> — Model detects you're done, optionally presses Enter</li>
     </ol>
 
     <hr />
 
-    <h2>Installation</h2>
+    <h2 id="install">Install</h2>
 
-    <pre><code># Clone the repo
-git clone https://github.com/alosec/yappatron
-cd yappatron
-
-# Install
-./scripts/install.sh
-
-# Run
-yappatron</code></pre>
+    <pre><code>git clone https://github.com/alosec/yappatron
+cd yappatron/packages/app/Yappatron
+swift build</code></pre>
 
     <h3>Requirements</h3>
     <ul>
-      <li>macOS (Apple Silicon recommended)</li>
-      <li>Python 3.10+</li>
-      <li>Microphone permissions</li>
-      <li>Accessibility permissions (for keystroke simulation)</li>
+      <li>macOS 14+ (Sonoma)</li>
+      <li>Apple Silicon</li>
+      <li>Microphone permission</li>
+      <li>Accessibility permission (keystroke injection)</li>
     </ul>
 
     <hr />
 
-    <h2>Usage</h2>
-
-    <pre><code># Start dictating (just talk!)
-yappatron
-
-# Use a larger model for better accuracy
-yappatron --model small
-
-# Enroll your voice for speaker ID
-yappatron enroll
-
-# Disable speaker verification
-yappatron --no-speaker-id</code></pre>
-
-    <h3>Custom Vocabulary</h3>
-    <p>Edit <code>~/.yappatron/vocabulary.yaml</code>:</p>
-
-    <pre><code>vocabulary:
-  - word: Yappatron
-    aliases: ["yap a tron", "yapper tron"]
-  - word: API
-    aliases: ["a p i"]
-  - word: OAuth
-    aliases: ["o auth"]</code></pre>
+    <h2>Status</h2>
+    <p>
+      <strong>Alpha.</strong> Core streaming works great. Still ironing out bugs.
+      See <a href="https://github.com/alosec/yappatron/tree/main/memory-bank/02-active">active work</a>.
+    </p>
 
     <hr />
 
@@ -129,24 +88,12 @@ yappatron --no-speaker-id</code></pre>
       <p>The best interface is no interface.</p>
     </blockquote>
     <p>
-      Voice dictation should be invisible. You think, you speak, words appear.
-      No buttons, no modes, no cognitive overhead.
-    </p>
-    <p>
-      Yappatron is an experiment in <strong>ambient computing</strong> — technology that
-      fades into the background and just works.
-    </p>
-
-    <hr />
-
-    <h2>Contributing</h2>
-    <p>
-      Yappatron is open source and contributions are welcome!
-      Check out the <a href="https://github.com/alosec/yappatron">GitHub repo</a>.
+      Voice dictation should be invisible. Think, speak, words appear.
+      No buttons, no modes, no cognitive load.
     </p>
 
     <footer>
-      <p>Made with 🎤 by yappers everywhere</p>
+      <p>Made with 🌸 for yappers</p>
       <p><a href="https://github.com/alosec/yappatron">GitHub</a></p>
     </footer>
   </main>
