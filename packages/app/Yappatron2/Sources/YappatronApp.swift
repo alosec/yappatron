@@ -81,9 +81,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // MARK: - Engine Setup
     
     func setupEngineCallbacks() {
+        // Final transcription (on EOU) - for now just reset, partials handle typing
         engine.onTranscription = { [weak self] text in
             Task { @MainActor in
-                self?.handleTranscription(text)
+                self?.handleFinalTranscription(text)
+            }
+        }
+        
+        // Partial transcription (ghost text) - updates as you speak
+        engine.onPartialTranscription = { [weak self] partial in
+            Task { @MainActor in
+                self?.handlePartialTranscription(partial)
             }
         }
         
@@ -121,7 +129,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             .store(in: &cancellables)
     }
     
-    func handleTranscription(_ text: String) {
+    /// Handle partial transcription updates (ghost text)
+    /// Updates existing text as the model refines its prediction
+    func handlePartialTranscription(_ partial: String) {
+        guard !isPaused else { return }
+        
+        // Check if input is focused
+        guard InputSimulator.isTextInputFocused() else {
+            return
+        }
+        
+        // Calculate diff and update
+        inputSimulator.applyTextUpdate(from: currentTypedText, to: partial)
+        currentTypedText = partial
+    }
+    
+    /// Handle final transcription (EOU detected)
+    /// The text is already typed via partials, just finalize
+    func handleFinalTranscription(_ text: String) {
         guard !isPaused else { return }
         
         // Check if input is focused
@@ -130,18 +155,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
         
-        // Add space before if we already have text
-        let textToType = currentTypedText.isEmpty ? text : " " + text
+        // Ensure final text is correct (in case partials diverged)
+        if currentTypedText != text {
+            inputSimulator.applyTextUpdate(from: currentTypedText, to: text)
+        }
         
-        // Type it
-        inputSimulator.typeString(textToType)
-        currentTypedText += textToType
+        // Add trailing space for next utterance
+        inputSimulator.typeString(" ")
         
         // Press enter if enabled
         if pressEnterAfterSpeech {
             inputSimulator.pressEnter()
-            currentTypedText = ""
         }
+        
+        // Reset for next utterance
+        currentTypedText = ""
     }
     
     func updateOverlayStatus() {
