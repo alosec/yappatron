@@ -1,139 +1,140 @@
 # Yappatron Memory Bank
 
 ## Project Overview
-**Yappatron** - Open-source always-on voice dictation app. No hotkeys, no toggles - just talk and text streams into focused inputs.
+**Yappatron** - Open-source always-on voice dictation. No hotkeys, no toggles - just talk and text streams into focused inputs.
 
-## Current Status: STREAMING WORKS 🔥
-Real-time streaming transcription is **profoundly strong**. Words appear instantly as you speak. Core UX is exactly what we wanted.
+## Links
+- **GitHub:** https://github.com/alosec/yappatron
+- **Website:** https://yappatron.pages.dev (CF Pages, project: `yappatron`)
 
-## GitHub Repo
-https://github.com/alosec/yappatron
+## Current Status
+Real-time streaming works. 160ms latency. Words appear as you speak.
 
-## Website
-https://yappatron.pages.dev (Cloudflare Pages, project: `yappatron`)
+**P0 blocker:** Race condition crash in FluidAudio (yap-e049)
 
-## TODO (sync from Mac)
-- [ ] Export td tasks from Mac ~/Workspace/yappatron and commit to repo
-- [ ] Push website styling update
-
-## Architecture (Production)
+## Architecture
 ```
-Swift (Yappatron.app)
 ┌─────────────────────────────────────────────────┐
-│ AVFoundation mic (48kHz → 16kHz)                │
-│ StreamingEouAsrManager (160ms chunks)           │
-│   ├── partialCallback → ghost text (instant!)   │
-│   └── eouCallback → finalize + Enter            │
-│ InputSimulator (backspace corrections)          │
-│ Menu bar UI + status bubble overlay             │
-│   └── Blue=listening, Green=done                │
+│ Swift (Yappatron.app) - menu bar + overlay      │
+├─────────────────────────────────────────────────┤
+│ AVFoundation mic (48kHz → 16kHz resampling)     │
+│                  ↓                              │
+│ FluidAudio StreamingEouAsrManager               │
+│   • 160ms chunks → Neural Engine                │
+│   • partialCallback → ghost text                │
+│   • eouCallback → finalize utterance            │
+│                  ↓                              │
+│ InputSimulator (CGEvent keystroke injection)    │
+│   • Diff-based: backspace corrections           │
+│   • Types into focused text field               │
 └─────────────────────────────────────────────────┘
+
+packages/
+├── app/Yappatron/     # Swift app (PRODUCTION)
+├── core/              # Python prototype (DORMANT)
+└── website/           # Astro landing page
 ```
 
-## What's Working
-- ✅ **Instant streaming** - words appear as you speak (160ms latency)
-- ✅ **Ghost text** - updates live with backspace corrections
-- ✅ **Status bubble** - blue while speaking, green when done
-- ✅ **Press Enter on complete** - auto-sends when EOU detected (persisted setting)
-- ✅ **Pure Swift** - no Python, no WebSocket, single process
-- ✅ **Neural Engine** - runs on ANE for efficiency
+## Licensing
+All permissive. No GPL.
 
-## CRITICAL BUG: Race Condition Crash (yap-4293)
-App crashes randomly with assertion failure in `StreamingEouAsrManager.process()` at `removeFirst(_:)`. This is a thread-safety issue in FluidAudio's internal audio buffer handling.
+| Dependency | License | Notes |
+|------------|---------|-------|
+| FluidAudio | Apache 2.0 | Core streaming ASR |
+| HotKey | MIT | Keyboard shortcuts |
+| Parakeet models | MIT/Apache 2.0 | NVIDIA open models |
+| Yappatron | MIT | This project |
 
-**Current mitigation:** Serial DispatchQueue + semaphore in `processAudioBuffer()` - NOT SUFFICIENT.
+⚠️ FluidAudioTTS (not used) includes GPL ESpeakNG - avoid if staying permissive.
 
-**Real fix needed:** Either FluidAudio needs internal synchronization, or we need proper actor isolation.
-
-## EOU Behavior (Understood)
-The model is semantic-aware for End-of-Utterance detection:
-- **Long/complete thoughts** → finalizes quickly after you stop
-- **Short fragments** → waits longer, thinks you might continue
-
-This is intentional. User adapts speech patterns to signal completion with conclusive language.
-
-## Key Files
+## Key Files (Mac)
 ```
-/Users/alex/Workspace/yappatron/packages/app/Yappatron/
+~/Workspace/yappatron/packages/app/Yappatron/
 ├── Package.swift                 # FluidAudio + HotKey deps
 └── Sources/
     ├── YappatronApp.swift        # Main app, menu bar, hotkeys
-    ├── TranscriptionEngine.swift # StreamingEouAsrManager
-    ├── InputSimulator.swift      # CGEvent + ghost text
-    └── OverlayWindow.swift       # Status bubble UI
+    ├── TranscriptionEngine.swift # StreamingEouAsrManager wrapper
+    ├── InputSimulator.swift      # CGEvent + diff-based ghost text
+    └── OverlayWindow.swift       # Status bubble (blue/green)
 ```
 
-## Commands
+## Commands (Mac)
 ```bash
 # Build
 cd ~/Workspace/yappatron/packages/app/Yappatron && swift build
 
-# Deploy
+# Deploy to /Applications
 cp .build/debug/Yappatron /Applications/Yappatron.app/Contents/MacOS/
 codesign --force --deep --sign - /Applications/Yappatron.app
 
-# Run (in tmux)
+# Run
 tmux new-session -d -s yappatron '/Applications/Yappatron.app/Contents/MacOS/Yappatron 2>&1 | tee /tmp/yappatron.log'
-
-# Watch logs
 tail -f /tmp/yappatron.log
 
 # Kill
 pkill -9 -f Yappatron
+```
 
-# Tasks
-export PATH="$HOME/.local/bin:$PATH" && td list
+## Commands (VPS - deploy website)
+```bash
+cd ~/code/yappatron/packages/website
+npm run build
+CLOUDFLARE_API_TOKEN=$(cat ~/.config/cloudflare/pages-token) npx wrangler pages deploy dist --project-name yappatron
 ```
 
 ## Technical Notes
 
-### StreamingEouAsrManager
-- **Chunk size:** 160ms (2560 samples)
-- **EOU debounce:** 800ms (in FluidAudio code)
-- **Model:** parakeet-realtime-eou-120m-coreml (120M params, 5x smaller than batch model)
-- **Behavior:** Model is conservative on short utterances, waits for complete thoughts
+### Streaming ASR
+- **Model:** parakeet-realtime-eou-120m (120M params, CoreML)
+- **Chunk size:** 160ms (2560 samples at 16kHz)
+- **EOU debounce:** 800ms silence confirms end-of-utterance
+- **Inference:** Apple Neural Engine (ANE)
 
-### Ghost Text Flow
-1. partialCallback fires with updated text
-2. InputSimulator.applyTextUpdate() diffs old vs new
-3. Backspaces delete divergent suffix, types new suffix
-4. Result: seamless live updates
+### Ghost Text Diffing
+```swift
+func applyTextUpdate(from oldText: String, to newText: String) {
+    let commonPrefix = zip(old, new).prefix(while: ==).count
+    deleteChars(old.count - commonPrefix)  // backspace
+    typeString(new.dropFirst(commonPrefix)) // append
+}
+```
+Partials accumulate ("hello" → "hello wor" → "hello world"). Backspacing only fires if model revises prediction mid-stream.
 
-### Models Location
+### EOU Semantics
+Model is semantically aware:
+- Complete thoughts → fast finalization
+- Fragments ("okay", "um") → waits for continuation
+
+### Models Location (Mac)
 ```
 ~/Library/Application Support/FluidAudio/Models/
-├── parakeet-eou-streaming/160ms/   # Streaming models (in use)
-├── silero-vad-coreml/              # VAD (downloaded, not used)
-└── parakeet-tdt-0.6b-v2-coreml/    # Batch models (not used)
+└── parakeet-eou-streaming/160ms/
 ```
 
-## Open Issues (Priority Order)
-1. **yap-4293** (P0 bug): App crashes on FluidAudio race condition - FIX NEXT
-2. yap-d192: Website deployment
-3. yap-d958: Custom vocabulary
-4. yap-8e8b: App notarization
-5. yap-0f5a: Error handling polish
-6. yap-94a6: First-run experience
-7. yap-dec5: Liquid glass overlay (macOS 26)
-8. yap-19b3: Bottom bar ticker mode
-9. yap-12d5: Overlay text scroll
-10. yap-0e4f: Bubble status-only mode
-11. yap-6b90: Filter hallucinations
-12. yap-b856: Press Enter after speech
+## Open Issues
+Use `td list` in project directory. Key issues:
 
-## User Environment
-- macOS 26.2 (Tahoe)
-- Apple Silicon M4 MacBook Air, 16GB RAM
-- Task tool: `td` at `$HOME/.local/bin`
+| ID | Priority | Description |
+|----|----------|-------------|
+| yap-e049 | P0 | Race condition crash in FluidAudio buffer |
+| yap-ac58 | P2 | Custom vocabulary (Swift port) |
+| yap-a4df | P2 | App notarization |
 
-## Session Summary (Jan 7, 2026)
-- Started with slow Python+Whisper batch transcription
-- Rewrote in pure Swift with FluidAudio StreamingEouAsrManager
-- Achieved instant real-time streaming (160ms latency)
-- Consolidated Yappatron2 → Yappatron (single app bundle)
-- Added UserDefaults persistence for Enter setting
-- Discovered EOU is semantic-aware (works as intended for complete thoughts)
-- **Unresolved:** Race condition crash in FluidAudio - needs proper fix
+## TODO
+- [ ] Sync td tasks from Mac ~/Workspace/yappatron
+- [ ] Fix race condition (actor isolation or upstream fix)
 
-## Git Status
-Clean at cb4e577, pushed to origin.
+## Session Log
+
+### Jan 8, 2026 (VPS)
+- Cloned repo, explored architecture
+- Deployed website to yappatron.pages.dev
+- Added sakura styling
+- Documented licensing (all permissive)
+- Created td tasks for tracking
+
+### Jan 7, 2026 (Mac)
+- Rewrote from Python+Whisper to pure Swift+FluidAudio
+- Achieved 160ms streaming latency
+- Consolidated Yappatron2 → Yappatron
+- Hit race condition crash (unresolved)
