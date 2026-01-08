@@ -1,0 +1,37 @@
+# Yappatron Configuration
+# =======================
+
+# Audio settings
+audio:
+  sample_rate: 16000
+  channels: 1
+  # Voice activity detection threshold (0.0 - 1.0)
+  # Higher = more strict (less false positives, may miss quiet speech)
+  # Lower = more sensitive (catches quiet speech, more false positives)
+  vad_threshold: 0.5
+
+# Transcription settings
+transcription:
+  # Model size: tiny, base, small, medium, large-v3
+  # Larger = more accurate but slower
+  model_size: base
+  # Language code (en, es, fr, de, etc.)
+  language: en
+
+# Speaker identification
+speaker:
+  # Enable speaker verification (only your voice triggers dictation)
+  enabled: true
+  # Similarity threshold for verification (0.0 - 1.0)
+  # Higher = more strict (may reject your voice sometimes)
+  # Lower = more permissive (may accept others' voices)
+  threshold: 0.25
+
+# Output settings
+output:
+  # Mode: keystroke (types character by character) or paste (clipboard paste)
+  mode: keystroke
+  # Delay between keystrokes in seconds (for keystroke mode)
+  keystroke_delay: 0.015
+  # Delay between words in seconds
+  word_delay: 0.05

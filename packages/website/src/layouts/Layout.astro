@@ -1,0 +1,107 @@
+---
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="description" content="Yappatron - Open-source always-on voice dictation. No hotkeys, no toggles—just yap." />
+    <meta name="viewport" content="width=device-width" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title}</title>
+    <!-- Sakura CSS - Minimal classless CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/sakura.css/css/sakura.css" media="screen" />
+    <link rel="stylesheet" href="https://unpkg.com/sakura.css/css/sakura-dark.css" media="screen and (prefers-color-scheme: dark)" />
+    <style>
+      :root {
+        --accent: #7c3aed;
+      }
+      body {
+        max-width: 800px;
+      }
+      .hero {
+        text-align: center;
+        padding: 2rem 0;
+      }
+      .hero h1 {
+        font-size: 3rem;
+        margin-bottom: 0.5rem;
+      }
+      .tagline {
+        font-size: 1.5rem;
+        opacity: 0.8;
+        margin-bottom: 2rem;
+      }
+      .cta {
+        display: inline-block;
+        background: var(--accent);
+        color: white;
+        padding: 0.75rem 1.5rem;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: bold;
+        margin: 0.5rem;
+      }
+      .cta:hover {
+        opacity: 0.9;
+      }
+      .cta.secondary {
+        background: transparent;
+        border: 2px solid var(--accent);
+        color: var(--accent);
+      }
+      .features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1.5rem;
+        margin: 2rem 0;
+      }
+      .feature {
+        padding: 1rem;
+        border-radius: 8px;
+        background: rgba(124, 58, 237, 0.05);
+      }
+      .feature h3 {
+        margin-top: 0;
+      }
+      .demo {
+        background: #1a1a2e;
+        color: #eee;
+        padding: 1rem;
+        border-radius: 8px;
+        font-family: monospace;
+        margin: 2rem 0;
+      }
+      .demo .prompt {
+        color: #7c3aed;
+      }
+      .demo .output {
+        color: #4ade80;
+      }
+      code {
+        background: rgba(124, 58, 237, 0.1);
+        padding: 0.2rem 0.4rem;
+        border-radius: 4px;
+      }
+      pre code {
+        background: transparent;
+        padding: 0;
+      }
+      footer {
+        text-align: center;
+        margin-top: 4rem;
+        padding: 2rem 0;
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

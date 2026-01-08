@@ -1,0 +1,153 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Yappatron - Just Yap">
+  <main>
+    <div class="hero">
+      <h1>🎤 Yappatron</h1>
+      <p class="tagline">Just yap.</p>
+      <p>Open-source always-on voice dictation.<br/>No hotkeys. No toggles. Just talk.</p>
+      <div>
+        <a href="https://github.com/alosec/yappatron" class="cta">Get Started</a>
+        <a href="#how-it-works" class="cta secondary">Learn More</a>
+      </div>
+    </div>
+
+    <hr />
+
+    <h2>Why Yappatron?</h2>
+    <p>
+      Current dictation apps make you push buttons. Hold a key. Toggle on and off.
+      That's not how talking works. <strong>Yappatron just listens.</strong>
+    </p>
+
+    <div class="features">
+      <div class="feature">
+        <h3>🔊 Always On</h3>
+        <p>No push-to-talk. No toggle. Start talking and your words appear. Stop talking and... nothing happens. It just waits.</p>
+      </div>
+      <div class="feature">
+        <h3>⚡ Real-time Streaming</h3>
+        <p>Characters appear as you speak. Like watching yourself think onto the screen.</p>
+      </div>
+      <div class="feature">
+        <h3>🔒 Fully Local</h3>
+        <p>All processing happens on your machine. No cloud. No data leaving your computer. Ever.</p>
+      </div>
+      <div class="feature">
+        <h3>🎯 Knows Your Voice</h3>
+        <p>Speaker identification means only YOU can dictate. Someone walks up? They can't hijack your input.</p>
+      </div>
+      <div class="feature">
+        <h3>🧠 Context Aware</h3>
+        <p>Text input focused? Stream right into it. Nothing focused? Collect in a floating bubble.</p>
+      </div>
+      <div class="feature">
+        <h3>📖 Custom Vocabulary</h3>
+        <p>Add your own words, names, acronyms. Yappatron learns how you talk.</p>
+      </div>
+    </div>
+
+    <hr />
+
+    <h2 id="how-it-works">How It Works</h2>
+    
+    <div class="demo">
+      <p><span class="prompt">$</span> yappatron</p>
+      <p>Loading Whisper model 'base'...</p>
+      <p>Model loaded.</p>
+      <p>==================================================</p>
+      <p>YAPPATRON - Just yap!</p>
+      <p>==================================================</p>
+      <p></p>
+      <p>Listening... (Ctrl+C to stop)</p>
+      <p></p>
+      <p>[Speaking...] <span class="output">Hello world this is me just talking naturally</span> [Done]</p>
+    </div>
+
+    <ol>
+      <li><strong>Voice Activity Detection</strong> — Silero VAD detects when you start speaking</li>
+      <li><strong>Speaker Verification</strong> — Optional check that it's actually you</li>
+      <li><strong>Streaming Transcription</strong> — Whisper transcribes in real-time</li>
+      <li><strong>Smart Output</strong> — Text streams to focused input or floating bubble</li>
+    </ol>
+
+    <hr />
+
+    <h2>Installation</h2>
+
+    <pre><code># Clone the repo
+git clone https://github.com/alosec/yappatron
+cd yappatron
+
+# Install
+./scripts/install.sh
+
+# Run
+yappatron</code></pre>
+
+    <h3>Requirements</h3>
+    <ul>
+      <li>macOS (Apple Silicon recommended)</li>
+      <li>Python 3.10+</li>
+      <li>Microphone permissions</li>
+      <li>Accessibility permissions (for keystroke simulation)</li>
+    </ul>
+
+    <hr />
+
+    <h2>Usage</h2>
+
+    <pre><code># Start dictating (just talk!)
+yappatron
+
+# Use a larger model for better accuracy
+yappatron --model small
+
+# Enroll your voice for speaker ID
+yappatron enroll
+
+# Disable speaker verification
+yappatron --no-speaker-id</code></pre>
+
+    <h3>Custom Vocabulary</h3>
+    <p>Edit <code>~/.yappatron/vocabulary.yaml</code>:</p>
+
+    <pre><code>vocabulary:
+  - word: Yappatron
+    aliases: ["yap a tron", "yapper tron"]
+  - word: API
+    aliases: ["a p i"]
+  - word: OAuth
+    aliases: ["o auth"]</code></pre>
+
+    <hr />
+
+    <h2>Philosophy</h2>
+    <blockquote>
+      <p>The best interface is no interface.</p>
+    </blockquote>
+    <p>
+      Voice dictation should be invisible. You think, you speak, words appear.
+      No buttons, no modes, no cognitive overhead.
+    </p>
+    <p>
+      Yappatron is an experiment in <strong>ambient computing</strong> — technology that
+      fades into the background and just works.
+    </p>
+
+    <hr />
+
+    <h2>Contributing</h2>
+    <p>
+      Yappatron is open source and contributions are welcome!
+      Check out the <a href="https://github.com/alosec/yappatron">GitHub repo</a>.
+    </p>
+
+    <footer>
+      <p>Made with 🎤 by yappers everywhere</p>
+      <p><a href="https://github.com/alosec/yappatron">GitHub</a></p>
+    </footer>
+  </main>
+</Layout>

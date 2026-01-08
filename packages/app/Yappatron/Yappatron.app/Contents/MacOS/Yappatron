@@ -1,0 +1,9 @@
+#!/bin/bash
+# Yappatron Launcher
+# The Swift app now manages the Python engine directly
+
+PROJECT_DIR="$HOME/Workspace/yappatron"
+BINARY="$PROJECT_DIR/packages/app/Yappatron/.build/debug/Yappatron"
+
+# Launch the Swift app (it will start the engine)
+exec "$BINARY"
