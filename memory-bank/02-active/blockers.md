@@ -1,6 +1,6 @@
 # Blockers
 
-**Last Updated:** 2026-01-08
+**Last Updated:** 2026-01-09
 
 ## Active Blockers
 
@@ -15,24 +15,17 @@
   2. Swift actor isolation around the manager
   3. Different threading model for audio callback
 
-### Permission / Input Not Working — P0
-- **Status:** Investigating
-- **Symptoms:** 
-  - No permission prompts when running from standalone terminal
-  - Audio chunks flow but no transcription output
-  - Keystroke injection not working even after accessibility grant
-- **Attempted:**
-  - Ad-hoc signing via `scripts/run-dev.sh` — did not resolve
-  - Audio capture confirmed working (chunks logged at 50/sec)
-- **Likely causes:**
-  1. Accessibility permission not actually granted to correct binary
-  2. `isTextInputFocused()` returning false (AX query failing)
-  3. Model producing empty transcriptions
-- **Next steps:**
-  - Add debug logging for `isTextInputFocused()` result
-  - Check if partials are being generated
-  - Verify accessibility in System Settings shows correct binary
-
 ## Resolved
 
-(none yet)
+### Permission / Input Not Working — P0 ✓ RESOLVED 2026-01-09
+- **Problem:** Permissions didn't persist across rebuilds when running bare Swift executable
+- **Root cause:** Running from `.build/debug/` meant binary hash changed on every rebuild, breaking permission tracking
+- **Solution:** Created proper .app bundle with stable bundle ID + location
+  - Enhanced Info.plist with complete metadata and permission descriptions
+  - Built proper `Yappatron.app` bundle structure
+  - Ad-hoc signed entire bundle (free, no Developer Program needed)
+  - Installed to `/Applications/` for stable location
+  - Bundle ID `com.yappatron.app` provides stable identity
+- **Result:** Permissions now persist across rebuilds. Transcription confirmed working.
+- **Scripts:** `./scripts/run-dev.sh` builds and installs automatically
+- **Documentation:** See BUILD.md
