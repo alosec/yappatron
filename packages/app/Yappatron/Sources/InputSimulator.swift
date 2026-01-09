@@ -139,3 +139,130 @@ class InputSimulator {
         return NSWorkspace.shared.frontmostApplication?.localizedName
     }
 }
+
+// MARK: - Virtual Key Codes
+
+extension InputSimulator {
+    enum VirtualKey: CGKeyCode {
+        case returnKey = 0x24
+        case delete = 0x33          // Backspace
+        case forwardDelete = 0x75   // Fn+Delete
+        case leftArrow = 0x7B
+        case rightArrow = 0x7C
+        case downArrow = 0x7D
+        case upArrow = 0x7E
+        case home = 0x73
+        case end = 0x77
+        case pageUp = 0x74
+        case pageDown = 0x79
+    }
+}
+
+// MARK: - Navigation
+
+extension InputSimulator {
+    /// Navigate cursor to a specific position
+    func navigate(to position: NavigateCommand.Position) throws {
+        switch position {
+        case .home:
+            // Cmd+Left Arrow
+            pressKey(.leftArrow, modifiers: .maskCommand)
+        case .end:
+            // Cmd+Right Arrow
+            pressKey(.rightArrow, modifiers: .maskCommand)
+        case .lineStart:
+            // Ctrl+A (Emacs binding)
+            pressKey(0x00, modifiers: .maskControl) // 'a'
+        case .lineEnd:
+            // Ctrl+E (Emacs binding)
+            pressKey(0x0E, modifiers: .maskControl) // 'e'
+        case .wordForward:
+            // Option+Right Arrow
+            pressKey(.rightArrow, modifiers: .maskAlternate)
+        case .wordBackward:
+            // Option+Left Arrow
+            pressKey(.leftArrow, modifiers: .maskAlternate)
+        case .characterForward(let count):
+            for _ in 0..<count {
+                pressKey(.rightArrow, modifiers: [])
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+        case .characterBackward(let count):
+            for _ in 0..<count {
+                pressKey(.leftArrow, modifiers: [])
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+        }
+    }
+}
+
+// MARK: - Selection
+
+extension InputSimulator {
+    /// Select text range
+    func select(range: SelectCommand.Range) throws {
+        switch range {
+        case .characters(let count, let direction):
+            let key: VirtualKey = direction == .forward ? .rightArrow : .leftArrow
+            for _ in 0..<count {
+                pressKey(key, modifiers: .maskShift)
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+        case .words(let count, let direction):
+            let key: VirtualKey = direction == .forward ? .rightArrow : .leftArrow
+            for _ in 0..<count {
+                pressKey(key, modifiers: [.maskShift, .maskAlternate])
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+        case .toLineStart:
+            pressKey(.leftArrow, modifiers: [.maskShift, .maskCommand])
+        case .toLineEnd:
+            pressKey(.rightArrow, modifiers: [.maskShift, .maskCommand])
+        case .all:
+            pressKey(0x00, modifiers: .maskCommand) // Cmd+A
+        }
+    }
+}
+
+// MARK: - Delete
+
+extension InputSimulator {
+    func delete(target: DeleteCommand.Target) throws {
+        switch target {
+        case .selection:
+            // Just press delete - removes current selection
+            pressKey(.delete, modifiers: [])
+        case .backward(let count):
+            deleteChars(count) // Use existing method
+        case .forward(let count):
+            for _ in 0..<count {
+                pressKey(.forwardDelete, modifiers: [])
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+        }
+    }
+}
+
+// MARK: - Low-level Key Press Helper
+
+extension InputSimulator {
+    /// Press a key with modifiers
+    func pressKey(_ key: VirtualKey, modifiers: CGEventFlags) {
+        pressKey(key.rawValue, modifiers: modifiers)
+    }
+
+    func pressKey(_ keyCode: CGKeyCode, modifiers: CGEventFlags) {
+        let source = CGEventSource(stateID: .hidSystemState)
+
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+
+        if !modifiers.isEmpty {
+            keyDown?.flags = modifiers
+            keyUp?.flags = modifiers
+        }
+
+        keyDown?.post(tap: .cghidEventTap)
+        keyUp?.post(tap: .cghidEventTap)
+    }
+}

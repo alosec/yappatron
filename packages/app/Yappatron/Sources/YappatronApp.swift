@@ -26,8 +26,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // Core
     var engine: TranscriptionEngine!
     var inputSimulator: InputSimulator!
-    var batchProcessor: BatchProcessor!
-    var refinementManager: TextRefinementManager!
+    var continuousRefinementManager: ContinuousRefinementManager!
+    var refinementConfig: RefinementConfig!
 
     // Hotkeys
     var togglePauseHotKey: HotKey?
@@ -58,17 +58,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         inputSimulator = InputSimulator()
         engine = TranscriptionEngine()
 
-        // Initialize batch processor for dual-pass refinement
-        batchProcessor = BatchProcessor()
-        refinementManager = TextRefinementManager(
-            batchProcessor: batchProcessor,
-            inputSimulator: inputSimulator
+        // Initialize continuous refinement (replaces dual-pass audio refinement)
+        refinementConfig = RefinementConfig(
+            isEnabled: true,
+            throttleInterval: 0.5,
+            enabledApps: ["Code", "Visual Studio Code", "TextEdit", "Notes"],
+            fallbackOnError: true
         )
 
-        // Set up refinement completion callback
-        refinementManager.onRefinementComplete = { [weak self] refinedText in
-            self?.handleRefinementComplete(refinedText)
-        }
+        continuousRefinementManager = ContinuousRefinementManager(
+            inputSimulator: inputSimulator,
+            config: refinementConfig
+        )
 
         // Request accessibility
         if !InputSimulator.hasAccessibilityPermission() {
@@ -80,16 +81,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupHotKeys()
         setupEngineCallbacks()
         observeEngineStatus()
-
-        // Initialize batch processor (parallel with streaming models)
-        Task {
-            do {
-                try await batchProcessor.initialize()
-            } catch {
-                NSLog("[Yappatron] Batch processor initialization failed: \(error.localizedDescription)")
-                NSLog("[Yappatron] Continuing with streaming-only mode")
-            }
-        }
 
         // Start the engine
         await engine.start()
@@ -108,24 +99,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // MARK: - Engine Setup
     
     func setupEngineCallbacks() {
-        // Final transcription (on EOU) - for now just reset, partials handle typing
+        // Final transcription (on EOU) - reset for next utterance
         engine.onTranscription = { [weak self] text in
             Task { @MainActor in
                 self?.handleFinalTranscription(text)
             }
         }
 
-        // Utterance complete callback - triggers batch refinement
-        engine.onUtteranceComplete = { [weak self] audioSamples, streamedText in
-            Task { @MainActor in
-                self?.refinementManager.refineTranscription(
-                    audioSamples: audioSamples,
-                    streamedText: streamedText
-                )
-            }
-        }
-
-        // Partial transcription (ghost text) - updates as you speak
+        // Partial transcription (streaming text) - triggers continuous refinement
         engine.onPartialTranscription = { [weak self] partial in
             Task { @MainActor in
                 self?.handlePartialTranscription(partial)
@@ -147,6 +128,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 self?.overlayWindow?.overlayViewModel.isSpeaking = false
                 self?.updateStatusIcon()
 
+                // Reset continuous refinement for next utterance
+                self?.continuousRefinementManager.reset()
+
                 // Auto-hide after a delay
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 if self?.overlayWindow?.overlayViewModel.isSpeaking == false {
@@ -166,23 +150,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             .store(in: &cancellables)
     }
     
-    /// Handle partial transcription updates (ghost text)
-    /// Updates existing text as the model refines its prediction
+    /// Handle partial transcription updates (streaming text)
+    /// Types text immediately and triggers continuous refinement
     func handlePartialTranscription(_ partial: String) {
         guard !isPaused else { return }
-        
+
         // Check if input is focused
         guard InputSimulator.isTextInputFocused() else {
             return
         }
-        
-        // Calculate diff and update
+
+        // Check if should refine for current app
+        let appName = InputSimulator.getFocusedAppName()
+        let shouldRefine = refinementConfig.shouldRefineForApp(appName)
+
+        // Type streaming text immediately
         inputSimulator.applyTextUpdate(from: currentTypedText, to: partial)
         currentTypedText = partial
+
+        // Trigger continuous refinement (async, non-blocking)
+        if shouldRefine {
+            continuousRefinementManager.onPartialUpdate(partial)
+        }
     }
     
     /// Handle final transcription (EOU detected)
-    /// The text is already typed via partials, now will be refined by batch processor
+    /// Text is already typed and refined via continuous refinement
     func handleFinalTranscription(_ text: String) {
         guard !isPaused else { return }
 
@@ -197,15 +190,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             inputSimulator.applyTextUpdate(from: currentTypedText, to: text)
             currentTypedText = text
         }
-
-        // Note: Space and Enter will be added after refinement completes
-        // to avoid interfering with text replacement
-    }
-
-    /// Called after batch refinement completes
-    func handleRefinementComplete(_ refinedText: String) {
-        // Update tracking to reflect refined text
-        currentTypedText = refinedText
 
         // Add trailing space for next utterance
         inputSimulator.typeString(" ")
