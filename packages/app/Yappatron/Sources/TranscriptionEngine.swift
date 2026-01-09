@@ -56,6 +56,56 @@ actor AudioBufferQueue {
     }
 }
 
+/// Stores audio chunks for current utterance to enable batch re-processing
+actor AudioChunkBuffer {
+    private var currentUtteranceBuffers: [AVAudioPCMBuffer] = []
+    private let format: AVAudioFormat
+
+    init(format: AVAudioFormat) {
+        self.format = format
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        // Copy buffer to prevent external modifications
+        guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameCapacity) else {
+            return
+        }
+
+        copy.frameLength = buffer.frameLength
+        if let srcData = buffer.floatChannelData, let dstData = copy.floatChannelData {
+            let channelCount = Int(buffer.format.channelCount)
+            let frameLength = Int(buffer.frameLength)
+            for channel in 0..<channelCount {
+                memcpy(dstData[channel], srcData[channel], frameLength * MemoryLayout<Float>.size)
+            }
+        }
+
+        currentUtteranceBuffers.append(copy)
+    }
+
+    func getAsSamples() -> [Float] {
+        // Concatenate all buffers into a single Float array
+        var allSamples: [Float] = []
+
+        for buffer in currentUtteranceBuffers {
+            guard let channelData = buffer.floatChannelData else { continue }
+            let frameLength = Int(buffer.frameLength)
+            let samples = Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
+            allSamples.append(contentsOf: samples)
+        }
+
+        return allSamples
+    }
+
+    func clear() {
+        currentUtteranceBuffers.removeAll()
+    }
+
+    func bufferCount() -> Int {
+        return currentUtteranceBuffers.count
+    }
+}
+
 /// Handles real-time streaming speech-to-text using FluidAudio's StreamingEouAsrManager
 class TranscriptionEngine: ObservableObject {
     
@@ -89,7 +139,13 @@ class TranscriptionEngine: ObservableObject {
     // Audio buffer queue - prevents race conditions without blocking audio thread
     private let audioBufferQueue = AudioBufferQueue()
     private var processingTask: Task<Void, Never>?
-    
+
+    // Audio chunk buffer for batch re-processing (will be initialized after audio format is known)
+    private var audioChunkBuffer: AudioChunkBuffer?
+
+    // Callback for batch refinement - provides audio samples and streamed text for re-processing
+    var onUtteranceComplete: (([Float], String) -> Void)?
+
     init() {
         log("TranscriptionEngine initialized")
     }
@@ -233,10 +289,27 @@ class TranscriptionEngine: ObservableObject {
     private func handleFinalTranscription(_ final: String) {
         let trimmed = final.trimmingCharacters(in: .whitespacesAndNewlines)
         log("Final (EOU): '\(trimmed)'")
-        
+
         // Reset partial tracking
         currentPartial = ""
-        
+
+        // Trigger batch refinement with saved audio samples
+        Task {
+            if let audioSamples = await audioChunkBuffer?.getAsSamples() {
+                let sampleCount = audioSamples.count
+                let durationSec = Float(sampleCount) / 16000.0
+                log("Utterance complete: \(sampleCount) samples (~\(String(format: "%.1f", durationSec))s)")
+
+                // Call refinement callback with audio and streamed text
+                DispatchQueue.main.async { [weak self] in
+                    self?.onUtteranceComplete?(audioSamples, trimmed)
+                }
+            }
+
+            // Clear chunk buffer for next utterance
+            await audioChunkBuffer?.clear()
+        }
+
         DispatchQueue.main.async { [weak self] in
             if !trimmed.isEmpty {
                 self?.onTranscription?(trimmed)
@@ -244,7 +317,7 @@ class TranscriptionEngine: ObservableObject {
             self?.isSpeaking = false
             self?.onSpeechEnd?()
         }
-        
+
         // Reset the streaming manager for next utterance
         Task {
             await streamingManager?.reset()
@@ -311,12 +384,19 @@ class TranscriptionEngine: ObservableObject {
             throw NSError(domain: "TranscriptionEngine", code: 2,
                          userInfo: [NSLocalizedDescriptionKey: "Failed to create audio format"])
         }
-        
+
+        // Initialize audio chunk buffer for batch re-processing
+        Task {
+            await MainActor.run {
+                self.audioChunkBuffer = AudioChunkBuffer(format: processingFormat)
+            }
+        }
+
         // Install tap and convert to 16kHz
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             self?.processAudioBuffer(buffer, inputFormat: inputFormat, outputFormat: processingFormat)
         }
-        
+
         audioEngine?.prepare()
         log("Audio capture setup complete")
     }
@@ -357,6 +437,8 @@ class TranscriptionEngine: ObservableObject {
         // Enqueue buffer for processing (non-blocking)
         Task {
             await audioBufferQueue.enqueue(outputBuffer)
+            // Also save to chunk buffer for batch re-processing
+            await audioChunkBuffer?.append(outputBuffer)
         }
     }
 

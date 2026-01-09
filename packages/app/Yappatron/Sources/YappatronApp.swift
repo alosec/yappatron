@@ -26,7 +26,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // Core
     var engine: TranscriptionEngine!
     var inputSimulator: InputSimulator!
-    
+    var batchProcessor: BatchProcessor!
+    var refinementManager: TextRefinementManager!
+
     // Hotkeys
     var togglePauseHotKey: HotKey?
     var toggleOverlayHotKey: HotKey?
@@ -52,24 +54,46 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     
     func setup() async {
         NSApp.setActivationPolicy(.accessory)
-        
+
         inputSimulator = InputSimulator()
         engine = TranscriptionEngine()
-        
+
+        // Initialize batch processor for dual-pass refinement
+        batchProcessor = BatchProcessor()
+        refinementManager = TextRefinementManager(
+            batchProcessor: batchProcessor,
+            inputSimulator: inputSimulator
+        )
+
+        // Set up refinement completion callback
+        refinementManager.onRefinementComplete = { [weak self] refinedText in
+            self?.handleRefinementComplete(refinedText)
+        }
+
         // Request accessibility
         if !InputSimulator.hasAccessibilityPermission() {
             _ = InputSimulator.requestAccessibilityPermissionIfNeeded()
         }
-        
+
         setupStatusItem()
         setupOverlay()
         setupHotKeys()
         setupEngineCallbacks()
         observeEngineStatus()
-        
+
+        // Initialize batch processor (parallel with streaming models)
+        Task {
+            do {
+                try await batchProcessor.initialize()
+            } catch {
+                NSLog("[Yappatron] Batch processor initialization failed: \(error.localizedDescription)")
+                NSLog("[Yappatron] Continuing with streaming-only mode")
+            }
+        }
+
         // Start the engine
         await engine.start()
-        
+
         if case .ready = engine.status {
             engine.startListening()
         }
@@ -90,14 +114,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 self?.handleFinalTranscription(text)
             }
         }
-        
+
+        // Utterance complete callback - triggers batch refinement
+        engine.onUtteranceComplete = { [weak self] audioSamples, streamedText in
+            Task { @MainActor in
+                self?.refinementManager.refineTranscription(
+                    audioSamples: audioSamples,
+                    streamedText: streamedText
+                )
+            }
+        }
+
         // Partial transcription (ghost text) - updates as you speak
         engine.onPartialTranscription = { [weak self] partial in
             Task { @MainActor in
                 self?.handlePartialTranscription(partial)
             }
         }
-        
+
         engine.onSpeechStart = { [weak self] in
             Task { @MainActor in
                 self?.overlayWindow?.overlayViewModel.status = .speaking
@@ -106,13 +140,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 self?.showOverlay()
             }
         }
-        
+
         engine.onSpeechEnd = { [weak self] in
             Task { @MainActor in
                 self?.overlayWindow?.overlayViewModel.status = .listening
                 self?.overlayWindow?.overlayViewModel.isSpeaking = false
                 self?.updateStatusIcon()
-                
+
                 // Auto-hide after a delay
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 if self?.overlayWindow?.overlayViewModel.isSpeaking == false {
@@ -148,29 +182,39 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     /// Handle final transcription (EOU detected)
-    /// The text is already typed via partials, just finalize
+    /// The text is already typed via partials, now will be refined by batch processor
     func handleFinalTranscription(_ text: String) {
         guard !isPaused else { return }
-        
+
         // Check if input is focused
         guard InputSimulator.isTextInputFocused() else {
             NSLog("[Yappatron] No text input focused, ignoring transcription")
             return
         }
-        
+
         // Ensure final text is correct (in case partials diverged)
         if currentTypedText != text {
             inputSimulator.applyTextUpdate(from: currentTypedText, to: text)
+            currentTypedText = text
         }
-        
+
+        // Note: Space and Enter will be added after refinement completes
+        // to avoid interfering with text replacement
+    }
+
+    /// Called after batch refinement completes
+    func handleRefinementComplete(_ refinedText: String) {
+        // Update tracking to reflect refined text
+        currentTypedText = refinedText
+
         // Add trailing space for next utterance
         inputSimulator.typeString(" ")
-        
+
         // Press enter if enabled
         if pressEnterAfterSpeech {
             inputSimulator.pressEnter()
         }
-        
+
         // Reset for next utterance
         currentTypedText = ""
     }
