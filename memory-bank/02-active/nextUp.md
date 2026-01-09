@@ -4,6 +4,10 @@
 
 ## Immediate (this session)
 1. Fix race condition crash — P0, blocks daily use (yap-e049)
+2. Improve transcription accuracy — P1, speed is great but accuracy needs work (yap-320m)
+   - Evaluate Parakeet EOU 320M model vs current 120M model
+   - Trade-off: larger model may be more accurate but slower
+   - Current: 120M performs well on speed, but misses words/phrases
 
 ## Soon (next few sessions)
 - Custom vocabulary support (Swift port from Python) (yap-ac58)
