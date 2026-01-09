@@ -1,19 +1,26 @@
 # Blockers
 
-**Last Updated:** 2026-01-09
+**Last Updated:** 2026-01-09 14:45 UTC
 
 ## Active Blockers
 
-### Race Condition Crash (yap-e049) — P0
-- **Status:** Investigating
-- **Impact:** App crashes randomly during use
+None currently - monitoring for regressions.
+
+## Resolved
+
+### Race Condition Crash (yap-e049) — P0 ✓ RESOLVED 2026-01-09
+- **Problem:** App crashes randomly during use due to thread-unsafe buffer access
+- **Root cause:** FluidAudio's internal audio buffer accessed from multiple threads simultaneously
 - **Location:** `StreamingEouAsrManager.process()` → `removeFirst(_:)`
-- **Cause:** FluidAudio's internal audio buffer isn't thread-safe
-- **Current mitigation:** Serial DispatchQueue + semaphore in `processAudioBuffer()` — NOT SUFFICIENT
-- **Real fix options:**
-  1. Upstream fix in FluidAudio
-  2. Swift actor isolation around the manager
-  3. Different threading model for audio callback
+- **Failed approach:** Serial DispatchQueue + semaphore blocked audio thread, causing glitches
+- **Solution:** Actor-based buffer queue pattern
+  - Created `AudioBufferQueue` actor for thread-safe buffer management
+  - Audio callback enqueues buffers asynchronously (non-blocking)
+  - Separate processing task dequeues and processes buffers serially
+  - Proper buffer copying prevents data races
+  - Max queue size (100) prevents unbounded memory growth
+- **Implementation:** `TranscriptionEngine.swift:17-57`, `363-387`
+- **Result:** Audio thread never blocks, serial processing guaranteed, no race conditions
 
 ## Resolved
 

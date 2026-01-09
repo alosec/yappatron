@@ -1,31 +1,34 @@
 # Active Work
 
-**Last Updated:** 2026-01-09 10:30 UTC
+**Last Updated:** 2026-01-09 15:45 UTC
 
 ## Current Focus
 
-Debugging permission/input issues. Audio flows but transcription not outputting.
+System is stable and working well. Ready to add configurability and explore further accuracy improvements.
 
 ### What's Done
 - ✅ Swift rewrite with FluidAudio streaming
-- ✅ 160ms real-time transcription
+- ✅ 320ms chunk size upgrade for improved accuracy (tested, confirmed working)
 - ✅ Ghost text with diff-based corrections
 - ✅ Website deployed to yappatron.pages.dev
 - ✅ Editorial redesign: Newsreader serif, breathing animation, light/dark mode
 - ✅ Content loaded from JSON at build time
 - ✅ Theme picker: mist, lotus, ember, moss, depth
 - ✅ Added `scripts/run-dev.sh` for ad-hoc signing
+- ✅ Permission issue resolved with proper .app bundle
+- ✅ Race condition fixed with actor-based buffer queue
+- ✅ System tested and passes quality bar for accuracy/speed balance
 
 ### In Progress
-- 🔄 Permission / input not working (P0) — see [blockers](blockers.md)
-  - Audio chunks confirmed flowing
-  - No transcription output, no keystroke injection
-- 🔄 Race condition crash (P0) — see [blockers](blockers.md)
+- Nothing currently blocking
 
 ### Next
-- [ ] Fix race condition (actor isolation or upstream)
+- [ ] Add chunk size configurability (user settings: 160ms/320ms)
+- [ ] Clean up excessive logging
+- [ ] Explore even slower/larger models for accuracy
 - [ ] Custom vocabulary (Swift port)
 - [ ] App notarization
+- [ ] Performance metrics collection
 
 ## Quick Commands
 

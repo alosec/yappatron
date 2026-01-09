@@ -13,6 +13,49 @@ func log(_ message: String) {
     fflush(stdout)
 }
 
+/// Thread-safe audio buffer queue using Swift actor
+actor AudioBufferQueue {
+    private var buffers: [AVAudioPCMBuffer] = []
+    private let maxSize = 100 // Prevent unbounded growth
+
+    func enqueue(_ buffer: AVAudioPCMBuffer) {
+        // Copy buffer data to prevent race conditions
+        guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameCapacity) else {
+            return
+        }
+
+        copy.frameLength = buffer.frameLength
+        if let srcData = buffer.floatChannelData, let dstData = copy.floatChannelData {
+            let channelCount = Int(buffer.format.channelCount)
+            let frameLength = Int(buffer.frameLength)
+            for channel in 0..<channelCount {
+                memcpy(dstData[channel], srcData[channel], frameLength * MemoryLayout<Float>.size)
+            }
+        }
+
+        if buffers.count < maxSize {
+            buffers.append(copy)
+        } else {
+            // Drop oldest buffer if queue is full (prevents memory buildup)
+            buffers.removeFirst()
+            buffers.append(copy)
+        }
+    }
+
+    func dequeue() -> AVAudioPCMBuffer? {
+        guard !buffers.isEmpty else { return nil }
+        return buffers.removeFirst()
+    }
+
+    func clear() {
+        buffers.removeAll()
+    }
+
+    func count() -> Int {
+        return buffers.count
+    }
+}
+
 /// Handles real-time streaming speech-to-text using FluidAudio's StreamingEouAsrManager
 class TranscriptionEngine: ObservableObject {
     
@@ -42,11 +85,10 @@ class TranscriptionEngine: ObservableObject {
     
     // Track current partial for diffing
     private var currentPartial: String = ""
-    
-    // Serial queue for audio processing to prevent race conditions
-    private let processingQueue = DispatchQueue(label: "com.yappatron.audioProcessing")
-    private var isProcessing = false
-    private var pendingBuffer: AVAudioPCMBuffer?
+
+    // Audio buffer queue - prevents race conditions without blocking audio thread
+    private let audioBufferQueue = AudioBufferQueue()
+    private var processingTask: Task<Void, Never>?
     
     init() {
         log("TranscriptionEngine initialized")
@@ -102,7 +144,7 @@ class TranscriptionEngine: ObservableObject {
             
             let manager = StreamingEouAsrManager(
                 configuration: config,
-                chunkSize: .ms160,      // 160ms chunks for lowest latency
+                chunkSize: .ms320,      // 320ms chunks for better accuracy
                 eouDebounceMs: 800      // 800ms silence to confirm end (was 1280)
             )
             
@@ -122,7 +164,10 @@ class TranscriptionEngine: ObservableObject {
             
             // Setup audio capture
             try setupAudioCapture()
-            
+
+            // Start audio processing task
+            startAudioProcessing()
+
             await MainActor.run { status = .ready }
             log("TranscriptionEngine ready (streaming mode)!")
             
@@ -135,16 +180,16 @@ class TranscriptionEngine: ObservableObject {
     private func downloadStreamingModels() async throws -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let modelsDir = appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)
-        let modelPath = modelsDir.appendingPathComponent(Repo.parakeetEou160.folderName)
-        
+        let modelPath = modelsDir.appendingPathComponent(Repo.parakeetEou320.folderName)
+
         // Check if models already exist (just check for streaming_encoder)
         let encoderPath = modelPath.appendingPathComponent("streaming_encoder.mlmodelc")
         if FileManager.default.fileExists(atPath: encoderPath.path) {
             log("Streaming models already cached")
             return modelPath
         }
-        
-        // Download the 160ms streaming models - only request what we actually need
+
+        // Download the 320M streaming models for improved accuracy
         // (vocab.json is used, not tokenizer.model)
         let actuallyNeeded = [
             ModelNames.ParakeetEOU.encoderFile,
@@ -152,14 +197,14 @@ class TranscriptionEngine: ObservableObject {
             ModelNames.ParakeetEOU.jointFile,
             ModelNames.ParakeetEOU.vocab
         ]
-        
+
         _ = try await DownloadUtils.loadModels(
-            .parakeetEou160,
+            .parakeetEou320,
             modelNames: actuallyNeeded,
             directory: modelsDir,
             computeUnits: .cpuAndNeuralEngine
         )
-        
+
         return modelPath
     }
     
@@ -277,61 +322,75 @@ class TranscriptionEngine: ObservableObject {
     }
     
     private var audioChunkCount = 0
-    
+
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat, outputFormat: AVAudioFormat) {
         // Convert to 16kHz mono using AVAudioConverter
         guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
             log("Failed to create audio converter")
             return
         }
-        
+
         let ratio = outputFormat.sampleRate / inputFormat.sampleRate
         let outputFrameCount = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
-        
+
         guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputFrameCount) else {
             log("Failed to create output buffer")
             return
         }
-        
+
         var error: NSError?
         let status = converter.convert(to: outputBuffer, error: &error) { inNumPackets, outStatus in
             outStatus.pointee = .haveData
             return buffer
         }
-        
+
         guard status != .error, error == nil else {
             log("Conversion error: \(error?.localizedDescription ?? "unknown")")
             return
         }
-        
+
         audioChunkCount += 1
         if audioChunkCount % 50 == 0 {
             log("Audio chunk #\(audioChunkCount), frames: \(outputBuffer.frameLength)")
         }
-        
-        // Serialize audio processing to prevent race conditions in FluidAudio
-        processingQueue.async { [weak self] in
+
+        // Enqueue buffer for processing (non-blocking)
+        Task {
+            await audioBufferQueue.enqueue(outputBuffer)
+        }
+    }
+
+    private func startAudioProcessing() {
+        processingTask = Task { [weak self] in
             guard let self = self else { return }
-            
-            // Use a semaphore to wait for async processing
-            let semaphore = DispatchSemaphore(value: 0)
-            
-            Task {
-                do {
-                    _ = try await self.streamingManager?.process(audioBuffer: outputBuffer)
-                } catch {
-                    log("Streaming process error: \(error.localizedDescription)")
+
+            while !Task.isCancelled {
+                // Dequeue and process buffers serially
+                if let buffer = await self.audioBufferQueue.dequeue() {
+                    do {
+                        _ = try await self.streamingManager?.process(audioBuffer: buffer)
+                    } catch {
+                        log("Streaming process error: \(error.localizedDescription)")
+                    }
+                } else {
+                    // No buffers available, wait a bit
+                    try? await Task.sleep(nanoseconds: 1_000_000) // 1ms
                 }
-                semaphore.signal()
             }
-            
-            // Wait for processing to complete before allowing next chunk
-            semaphore.wait()
+        }
+    }
+
+    private func stopAudioProcessing() {
+        processingTask?.cancel()
+        processingTask = nil
+        Task {
+            await audioBufferQueue.clear()
         }
     }
     
     func cleanup() {
         stopListening()
+        stopAudioProcessing()
         inputNode?.removeTap(onBus: 0)
         audioEngine = nil
         streamingManager = nil
