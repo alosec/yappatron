@@ -1,10 +1,10 @@
 # Active Work
 
-**Last Updated:** 2026-01-08 11:05 UTC
+**Last Updated:** 2026-01-09 10:30 UTC
 
 ## Current Focus
 
-Website redesigned with editorial aesthetic. Core app works but has race condition crash.
+Debugging permission/input issues. Audio flows but transcription not outputting.
 
 ### What's Done
 - ✅ Swift rewrite with FluidAudio streaming
@@ -14,10 +14,13 @@ Website redesigned with editorial aesthetic. Core app works but has race conditi
 - ✅ Editorial redesign: Newsreader serif, breathing animation, light/dark mode
 - ✅ Content loaded from JSON at build time
 - ✅ Theme picker: mist, lotus, ember, moss, depth
+- ✅ Added `scripts/run-dev.sh` for ad-hoc signing
 
 ### In Progress
+- 🔄 Permission / input not working (P0) — see [blockers](blockers.md)
+  - Audio chunks confirmed flowing
+  - No transcription output, no keystroke injection
 - 🔄 Race condition crash (P0) — see [blockers](blockers.md)
-- 🔄 Website polish (awaiting feedback)
 
 ### Next
 - [ ] Fix race condition (actor isolation or upstream)

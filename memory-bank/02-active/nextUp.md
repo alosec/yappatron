@@ -1,9 +1,10 @@
 # Next Up
 
-**Last Updated:** 2026-01-08
+**Last Updated:** 2026-01-09
 
 ## Immediate (this session)
-1. Fix race condition crash — P0, blocks daily use
+1. Debug permission/input issue — P0, audio flows but no transcription output
+2. Fix race condition crash — P0, blocks daily use
 
 ## Soon (next few sessions)
 - Custom vocabulary support (Swift port from Python)
