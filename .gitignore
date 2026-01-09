@@ -18,8 +18,9 @@ build/
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/
-*.app
-!Yappatron.app/
+
+# Build artifacts (generated .app bundles)
+build/
 
 # macOS
 .DS_Store

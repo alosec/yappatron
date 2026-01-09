@@ -7,7 +7,25 @@
     <string>com.yappatron.app</string>
     <key>CFBundleName</key>
     <string>Yappatron</string>
+    <key>CFBundleDisplayName</key>
+    <string>Yappatron</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>Yappatron</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Yappatron uses the microphone for voice dictation.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Yappatron needs to send keystrokes to type transcribed text.</string>
 </dict>
 </plist>
