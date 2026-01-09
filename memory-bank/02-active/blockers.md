@@ -17,4 +17,7 @@
 
 ## Resolved
 
-(none yet)
+### Permission Resets on Every Launch — FIXED
+- **Cause:** Unsigned Swift PM executable; macOS tracks permissions by code signature
+- **Fix:** `scripts/run-dev.sh` — ad-hoc signs binary after build
+- **Resolution Date:** 2026-01-09
