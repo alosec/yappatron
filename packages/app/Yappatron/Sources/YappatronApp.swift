@@ -26,8 +26,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // Core
     var engine: TranscriptionEngine!
     var inputSimulator: InputSimulator!
-    var continuousRefinementManager: ContinuousRefinementManager!
-    var refinementConfig: RefinementConfig!
 
     // Hotkeys
     var togglePauseHotKey: HotKey?
@@ -57,19 +55,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         inputSimulator = InputSimulator()
         engine = TranscriptionEngine()
-
-        // Initialize continuous refinement (replaces dual-pass audio refinement)
-        refinementConfig = RefinementConfig(
-            isEnabled: true,
-            throttleInterval: 0.5,
-            enabledApps: ["Code", "Visual Studio Code", "TextEdit", "Notes"],
-            fallbackOnError: true
-        )
-
-        continuousRefinementManager = ContinuousRefinementManager(
-            inputSimulator: inputSimulator,
-            config: refinementConfig
-        )
 
         // Request accessibility
         if !InputSimulator.hasAccessibilityPermission() {
@@ -128,9 +113,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 self?.overlayWindow?.overlayViewModel.isSpeaking = false
                 self?.updateStatusIcon()
 
-                // Reset continuous refinement for next utterance
-                self?.continuousRefinementManager.reset()
-
                 // Auto-hide after a delay
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 if self?.overlayWindow?.overlayViewModel.isSpeaking == false {
@@ -166,7 +148,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     /// Handle final transcription (EOU detected)
-    /// Trigger LLM refinement, then add spacing
+    /// Pure streaming - just add spacing and optionally press Enter
     func handleFinalTranscription(_ text: String) {
         guard !isPaused else { return }
 
@@ -182,27 +164,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             currentTypedText = text
         }
 
-        // Check if should refine for current app
-        let appName = InputSimulator.getFocusedAppName()
-        if refinementConfig.shouldRefineForApp(appName) {
-            // Trigger LLM refinement (async)
-            // Space and enter will be added after refinement completes
-            continuousRefinementManager.refineCompleteUtterance(text, completion: { [weak self] in
-                // Add trailing space after refinement
-                self?.inputSimulator.typeString(" ")
+        // Add trailing space
+        inputSimulator.typeString(" ")
 
-                // Press enter if enabled
-                if self?.pressEnterAfterSpeech == true {
-                    self?.inputSimulator.pressEnter()
-                }
-            })
-        } else {
-            // No refinement, add space immediately
-            inputSimulator.typeString(" ")
-
-            if pressEnterAfterSpeech {
-                inputSimulator.pressEnter()
-            }
+        // Press enter if enabled
+        if pressEnterAfterSpeech {
+            inputSimulator.pressEnter()
         }
 
         // Reset for next utterance
@@ -276,7 +243,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let enterItem = NSMenuItem(title: "Press Enter After Speech", action: #selector(toggleEnterAction), keyEquivalent: "")
         enterItem.state = pressEnterAfterSpeech ? .on : .off
         menu.addItem(enterItem)
-        
+
         menu.addItem(NSMenuItem.separator())
         
         if overlayWindow?.isVisible == true {
@@ -383,7 +350,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @objc func toggleEnterAction() {
         pressEnterAfterSpeech.toggle()
     }
-    
+
     @objc func showOverlayAction() {
         showOverlay()
     }

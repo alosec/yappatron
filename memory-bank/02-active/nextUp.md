@@ -1,20 +1,27 @@
 # Next Up
 
-**Last Updated:** 2026-01-09 (evening)
+**Last Updated:** 2026-01-09 (evening - post-testing)
 
 ## Immediate (next session)
 
-1. **Code Cleanup & Consolidation** — P1 (yap-cleanup)
-   - Remove/disable failed Ollama LLM refinement code
-   - Remove unused dual-pass audio components (BatchProcessor, TextRefinementManager)
-   - Clean up TextEditCommand infrastructure (built but unused)
-   - Consolidate on working pattern: pure streaming transcription
-   - Document what worked vs what didn't
+1. **Code Cleanup & Consolidation** — P1 (yap-87cd)
+   - Remove unused refinement infrastructure:
+     - PunctuationModel (Ollama integration)
+     - ContinuousRefinementManager
+     - TextEditCommand suite, DiffGenerator, EditApplier
+     - BatchProcessor and dual-pass audio code
+   - Keep codebase simple and focused on pure streaming
+   - Document what was tried and why it was removed
 
-2. **Current System Validation** — P1 (yap-streaming)
-   - Validate pure streaming-only approach in real usage
-   - Confirm this is the right direction vs post-processing
-   - Streaming ASR quality: ~5.73% WER, good enough without refinement?
+## Monitoring
+
+- **FluidAudio race condition crash** - Believed fixed with actor-based queue and 320ms chunking (Jan 9), but keep an eye out for any recurrence during regular use
+
+## Validation Status
+
+- ✅ **Pure streaming validation** (2026-01-09 evening) - User confirms "feels natural", "wonderful", "blows other tools out of the water"
+- ✅ **320ms chunking** - Sweet spot for accuracy and stability
+- ✅ **Hands-free UX** - Core differentiator vs button-based tools like Whisper Flow
 
 ## Future Exploration (not urgent)
 
