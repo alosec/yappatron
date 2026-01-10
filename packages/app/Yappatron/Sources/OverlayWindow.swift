@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Orb
 
 /// Minimal overlay - just a status indicator, not text display
 class OverlayWindow: NSWindow {
@@ -8,7 +9,7 @@ class OverlayWindow: NSWindow {
     
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 60, height: 60),
+            contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -59,23 +60,25 @@ class OverlayViewModel: ObservableObject {
 
 struct OverlayView: View {
     @ObservedObject var viewModel: OverlayViewModel
-    
+
     var body: some View {
         ZStack {
-            // Background circle
-            Circle()
-                .fill(.ultraThinMaterial)
-                .frame(width: 50, height: 50)
-            
-            // Status indicator
-            statusIcon
-                .font(.system(size: 24))
-                .foregroundStyle(statusColor)
+            // Use the Orb library for beautiful animated orb
+            OrbView(configuration: orbConfiguration)
+                .frame(width: 80, height: 80)
+                .opacity(orbOpacity)
+
+            // Status indicator overlay (for non-speaking states)
+            if !viewModel.isSpeaking {
+                statusIcon
+                    .font(.system(size: 24))
+                    .foregroundStyle(statusColor)
+            }
         }
-        .animation(.easeInOut(duration: 0.2), value: viewModel.isSpeaking)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.status)
+        .animation(.easeInOut(duration: 0.3), value: viewModel.isSpeaking)
+        .animation(.easeInOut(duration: 0.3), value: viewModel.status)
     }
-    
+
     @ViewBuilder
     private var statusIcon: some View {
         switch viewModel.status {
@@ -100,13 +103,12 @@ struct OverlayView: View {
         case .listening:
             Image(systemName: "waveform")
         case .speaking:
-            Image(systemName: "waveform.circle.fill")
-                .symbolEffect(.pulse, isActive: true)
+            EmptyView() // Orb speaks for itself
         case .error:
             Image(systemName: "exclamationmark.triangle.fill")
         }
     }
-    
+
     private var statusColor: Color {
         switch viewModel.status {
         case .idle: return .secondary
@@ -114,6 +116,84 @@ struct OverlayView: View {
         case .listening: return .green
         case .speaking: return .blue
         case .error: return .red
+        }
+    }
+
+    // Orb configuration based on state
+    private var orbConfiguration: OrbConfiguration {
+        switch viewModel.status {
+        case .speaking:
+            // Vibrant RGB shifting palette when speaking
+            return OrbConfiguration(
+                backgroundColors: [
+                    Color(red: 1.0, green: 0.0, blue: 0.3),  // Red-pink
+                    Color(red: 0.3, green: 0.0, blue: 1.0),  // Blue-purple
+                    Color(red: 0.0, green: 1.0, blue: 0.5),  // Green-cyan
+                    Color(red: 1.0, green: 0.2, blue: 0.0),  // Red-orange
+                    Color(red: 0.0, green: 0.5, blue: 1.0)   // Blue
+                ],
+                glowColor: .white,
+                coreGlowIntensity: 1.2,
+                speed: 60
+            )
+        case .listening:
+            // Subtle green glow when listening
+            return OrbConfiguration(
+                backgroundColors: [
+                    Color(red: 0.0, green: 1.0, blue: 0.4),
+                    Color(red: 0.0, green: 0.8, blue: 0.6),
+                    Color(red: 0.2, green: 1.0, blue: 0.5)
+                ],
+                glowColor: .green,
+                coreGlowIntensity: 0.8,
+                speed: 40
+            )
+        case .idle:
+            // Dim RGB when idle
+            return OrbConfiguration(
+                backgroundColors: [
+                    Color(red: 0.3, green: 0.3, blue: 0.5),
+                    Color(red: 0.4, green: 0.3, blue: 0.4),
+                    Color(red: 0.3, green: 0.4, blue: 0.4)
+                ],
+                glowColor: .white,
+                coreGlowIntensity: 0.3,
+                speed: 20
+            )
+        case .error:
+            // Red warning
+            return OrbConfiguration(
+                backgroundColors: [
+                    Color(red: 1.0, green: 0.0, blue: 0.0),
+                    Color(red: 0.8, green: 0.0, blue: 0.2),
+                    Color(red: 1.0, green: 0.2, blue: 0.0)
+                ],
+                glowColor: .red,
+                coreGlowIntensity: 1.5,
+                speed: 80
+            )
+        case .initializing, .downloading:
+            // Orange/amber loading
+            return OrbConfiguration(
+                backgroundColors: [
+                    Color(red: 1.0, green: 0.6, blue: 0.0),
+                    Color(red: 1.0, green: 0.4, blue: 0.2),
+                    Color(red: 1.0, green: 0.5, blue: 0.0)
+                ],
+                glowColor: .orange,
+                coreGlowIntensity: 1.0,
+                speed: 50
+            )
+        }
+    }
+
+    private var orbOpacity: Double {
+        switch viewModel.status {
+        case .speaking: return 1.0
+        case .listening: return 0.7
+        case .idle: return 0.3
+        case .error: return 0.9
+        case .initializing, .downloading: return 0.6
         }
     }
 }

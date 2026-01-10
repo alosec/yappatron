@@ -12,13 +12,15 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.9.1"),
         .package(url: "https://github.com/soffes/HotKey.git", from: "0.2.0"),
+        .package(url: "https://github.com/metasidd/Orb.git", from: "0.2.0"),
     ],
     targets: [
         .executableTarget(
             name: "Yappatron",
             dependencies: [
                 "FluidAudio",
-                "HotKey"
+                "HotKey",
+                "Orb"
             ],
             path: "Sources"
         )
