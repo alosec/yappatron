@@ -2,7 +2,7 @@
 
 **Created:** 2026-01-09
 **Updated:** 2026-01-09
-**Status:** Blocked - Need macOS-Native Approach
+**Status:** ✅ IMPLEMENTED - 6 Custom Orb Styles with Dropdown
 **Epic:** yap-dec5
 
 ## ❌ BLOCKER: metasidd/Orb (iOS-Only)
@@ -98,12 +98,80 @@ Use [twostraws/Inferno](https://github.com/twostraws/Inferno) for Metal shaders:
 - Complex path calculations
 - Need to implement morphing algorithm
 
+## ✅ IMPLEMENTED SOLUTION
+
+**Commit:** 01b9f47 - Implement 6 orb animation styles with dropdown menu
+
+Implemented 6 distinct orb animation styles, all with crisp circular edges and RGB color support:
+
+### 1. Mesh Gradient (Default)
+- Uses macOS 14+ `MeshGradient` with 3x3 animated control points
+- Liquid metal flowing effect
+- Control points drift with sin/cos for organic movement
+- **Best for:** Modern, sophisticated look
+- **Blur:** 3px for subtle softness
+
+### 2. Concentric Rings
+- 7 pulsing circular rings with phase-offset animation
+- Each ring scales and fades independently
+- Radar/sound wave aesthetic
+- **Best for:** Audio-reactive feel, clear state visibility
+- **Blur:** None (crisp strokes)
+
+### 3. Particle Cloud
+- 40 particles using golden angle spiral distribution
+- Depth effect: closer particles are larger/brighter
+- Particles drift with phase-based motion
+- **Best for:** Galaxy/nebula aesthetic, organic movement
+- **Blur:** None (individual particle clarity)
+
+### 4. Slice & Rotate
+- 12 pie slices with alternating rotation directions
+- Each slice pulses scale independently
+- Kaleidoscope effect
+- **Best for:** Vibrant, energetic look
+- **Blur:** 2px for color blending
+
+### 5. Voronoi Cells
+- 8 overlapping radial gradients from drifting points
+- Simulates organic cell division
+- Uses `.screen` blend mode for color mixing
+- **Best for:** Biological/organic aesthetic
+- **Blur:** None (handled by gradient falloff)
+
+### 6. Layered Gradients (Original)
+- 3 rotating gradient layers (radial + angular)
+- Counter-rotating for shimmer effect
+- **Best for:** Classic gradient look
+- **Blur:** 8px (intentionally soft)
+
+### Dropdown Menu
+- Menu appears below orb with current style name
+- All 6 styles switchable at runtime
+- State-based colors apply to all styles
+- Smooth transitions between styles
+
+### File Location
+`packages/app/Yappatron/Sources/OverlayWindow.swift`
+- Lines 60-67: `OrbStyle` enum
+- Lines 70-131: `OverlayView` with style picker
+- Lines 237-493: All 6 orb implementations + `PieSlice` helper
+
+### RGB Color Palette (Speaking State)
+```swift
+Color(red: 1.0, green: 0.0, blue: 0.3),  // Red-pink
+Color(red: 0.3, green: 0.0, blue: 1.0),  // Blue-purple
+Color(red: 0.0, green: 1.0, blue: 0.5),  // Green-cyan
+Color(red: 1.0, green: 0.2, blue: 0.0),  // Red-orange
+Color(red: 0.0, green: 0.5, blue: 1.0)   // Blue
+```
+
 ## Next Steps
 
-1. **Revert Orb integration** - Remove dependency, restore previous implementation
-2. **Implement Option 1 (Pure SwiftUI)** - Start with rotating layered circles approach
-3. **Test and iterate** - Get basic animation working first
-4. **Consider Option 2/3** - If more organic feel needed later
+1. **Test all 6 styles** - User feedback on which looks best
+2. **Select default style** - Choose one to ship, remove others if needed
+3. **Consider audio reactivity** - Add amplitude-based scaling/speed
+4. **Metal shaders** - If more performance needed later
 
 ## Future Enhancements
 
