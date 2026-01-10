@@ -9,42 +9,43 @@
   ],
   "features": [
     {
-      "title": "always listening",
-      "body": "No push-to-talk. Start talking, words appear. Stop talking, it waits."
+      "title": "streaming text",
+      "body": "Characters appear as you speak, just like typing. Watch your words flow in real-time."
     },
     {
-      "title": "160ms latency",
-      "body": "Real-time streaming. Characters appear as you speak."
+      "title": "built for vibe coding",
+      "body": "Talk to your AI. Describe what you want. Auto-enters when you pause so Claude responds instantly."
+    },
+    {
+      "title": "faster than apple",
+      "body": "320ms latency beats native dictation. More accurate too. Local Parakeet model on Neural Engine."
     },
     {
       "title": "fully local",
-      "body": "All processing on-device. No cloud. Your words never leave your machine."
-    },
-    {
-      "title": "neural engine",
-      "body": "Runs on Apple Silicon ANE. Efficient, not draining your battery."
+      "body": "All processing on-device. No cloud, no API calls. Your words never leave your machine."
     }
   ],
   "steps": [
-    { "label": "mic capture", "detail": "AVFoundation grabs audio, resamples to 16kHz" },
-    { "label": "streaming ASR", "detail": "160ms chunks fed to Parakeet model on Neural Engine" },
-    { "label": "ghost text", "detail": "partials stream into focused input with live corrections" },
-    { "label": "end of utterance", "detail": "model detects you're done, optionally presses enter" }
+    { "label": "start talking", "detail": "no button to press. just speak naturally wherever your cursor is." },
+    { "label": "watch it stream", "detail": "text appears character by character as you talk, with live corrections." },
+    { "label": "pause to send", "detail": "stop talking and it auto-presses enter. perfect for chatting with claude." },
+    { "label": "keep going", "detail": "it's always listening. start your next thought whenever you're ready." }
   ],
   "requirements": [
     "macOS 14+ (Sonoma)",
-    "Apple Silicon (M1/M2/M3)",
+    "Apple Silicon (M1/M2/M3/M4)",
     "Microphone permission",
     "Accessibility permission"
   ],
   "terminal": [
-    { "type": "prompt", "text": "~ " },
-    { "type": "command", "text": "yappatron" },
-    { "type": "output", "text": "loading parakeet-eou-120m..." },
-    { "type": "output", "text": "listening..." },
+    { "type": "prompt", "text": "> claude: " },
+    { "type": "speech", "text": "add a button that saves the form..." },
     { "type": "output", "text": "" },
-    { "type": "speech", "text": "hello world this is me talking naturally" },
-    { "type": "output", "text": "[done ↵]" }
+    { "type": "output", "text": "↵ sent" },
+    { "type": "output", "text": "" },
+    { "type": "prompt", "text": "> claude: " },
+    { "type": "speech", "text": "actually make it blue and put it on the right..." },
+    { "type": "output", "text": "↵ sent" }
   ],
   "themes": [
     { "id": "mist", "accent": "#94a3b8" },

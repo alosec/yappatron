@@ -1,57 +1,58 @@
 # Active Work
 
-**Last Updated:** 2026-01-10 05:00 UTC (2026-01-09 late night local)
+**Last Updated:** 2026-01-10
+**Status:** MILESTONE REACHED - stepping back for now
 
-## Current Focus
+## Current State
 
-System is stable with dual-pass refinement now available as optional toggle. Testing enabled mode for punctuation quality.
+Yappatron is ready to share. The app works well, the landing page looks great. Taking a break to focus on other projects.
 
 ### What's Done
 - ✅ Swift rewrite with FluidAudio streaming
-- ✅ 320ms chunk size upgrade for improved accuracy (tested, confirmed working)
+- ✅ 320ms chunk size for improved accuracy
 - ✅ Ghost text with diff-based corrections
-- ✅ **Orb animations:** Voronoi Cells (default) + Concentric Rings with RGB palette
-- ✅ **Dual-pass refinement:** Optional toggle for punctuation/capitalization (disabled by default)
-- ✅ Website deployed to yappatron.pages.dev
-- ✅ Editorial redesign: Newsreader serif, breathing animation, light/dark mode
-- ✅ Content loaded from JSON at build time
-- ✅ Theme picker: mist, lotus, ember, moss, depth
-- ✅ Added `scripts/run-dev.sh` for ad-hoc signing
-- ✅ Permission issue resolved with proper .app bundle
-- ✅ Race condition fixed with actor-based buffer queue
-- ✅ System tested and passes quality bar for accuracy/speed balance
+- ✅ Orb animations: Voronoi Cells (default) + Concentric Rings with RGB palette
+- ✅ Dual-pass refinement: Optional toggle for punctuation/capitalization
+- ✅ `scripts/run-dev.sh` for ad-hoc signing
+- ✅ Permission handling documented
 
-### In Progress
-- 🧪 **Testing dual-pass accuracy fixes** — Fixes implemented, ready for testing
-  - ✅ **Root cause found:** Audio buffer only captures AFTER isSpeaking flag set (misses first 100-300ms)
-  - ✅ Fix 1: Made audio buffering unconditional (captures all audio from start)
-  - ✅ Fix 2: Moved buffer clearing to after refinement completes (not at utterance start)
-  - ✅ Fix 3: Added diagnostic logging for isSpeaking transitions and buffer state
-  - ⏳ Pending: Real-world dictation testing to verify fixes work
+### Landing Page (2026-01-10 major facelift)
+- ✅ RGB multicolor breathing orb (red/green/blue gradient)
+- ✅ Light/dark mode toggle
+- ✅ Removed theme color picker (single unified look)
+- ✅ Video demo player with play/pause
+- ✅ Improved readability across all sections
+- ✅ Updated features: streaming text, built for vibe coding, faster than apple, fully local
+- ✅ Install instructions with run-dev.sh and permissions troubleshooting
+- ✅ Deployed to yappatron.pages.dev
 
-### Next
-- [ ] Test dual-pass fixes with real dictation
-- [ ] Consider visual feedback when refinement is processing
-- [ ] Add chunk size configurability (user settings: 160ms/320ms)
-- [ ] Clean up excessive logging
-- [ ] Explore larger batch models (1.1B) if CoreML conversion becomes available
+## Future Ideas (not urgent)
+
+### iPhone App
+Strong motivation here. Local models mean no subscription fees. Whisper Flow charges $15/month for something we built in hours with better UX. Would need Apple Developer Program ($99/year) anyway for notarization.
+
+### Live On-the-Fly Editing
+Instead of backspacing whole utterance, make edits as text streams in. Have a rough mental model for structuring LLM API calls for text-based corrections, but not ready to implement yet. Worth exploring with Claude when the time comes.
+
+### Go Legit
+Apple Developer license for notarization. Makes sense to do when building iPhone app anyway. No rush.
+
+### Other Backlog
+- [ ] **Listening toggle** (yap-c2dd) - Button/hotkey to enable/disable always-listening mode. Not push-to-talk, but a toggle. When off, no streaming or auto-enter happens.
+- [ ] Chunk size configurability (160ms/320ms toggle)
 - [ ] Custom vocabulary (Swift port)
-- [ ] App notarization
 - [ ] Performance metrics collection
+- [ ] Visual feedback when refinement is processing
 
 ## Quick Commands
 
 ```bash
 # Mac - build & run
 cd ~/Workspace/yappatron/packages/app/Yappatron
-swift build
-.build/debug/Yappatron
+./scripts/run-dev.sh
 
 # VPS - deploy website
 cd ~/code/yappatron/packages/website
 npm run build
 CLOUDFLARE_API_TOKEN=$(cat ~/.config/cloudflare/pages-token) npx wrangler pages deploy dist --project-name yappatron
-
-# Tasks
-td list
 ```

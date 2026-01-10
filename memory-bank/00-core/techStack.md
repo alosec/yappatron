@@ -24,9 +24,29 @@ Models auto-download to `~/Library/Application Support/FluidAudio/Models/`
 | Component | Technology |
 |-----------|------------|
 | Framework | Astro 4 |
-| Styling | Custom CSS (sakura-inspired) |
+| Styling | Custom CSS (RGB orb, light/dark mode) |
 | Hosting | Cloudflare Pages |
 | Project | `yappatron` |
+| URL | https://yappatron.pages.dev |
+
+### Website Deployment (from VPS)
+
+**IMPORTANT:** The Cloudflare Pages project name is `yappatron` (not `yappa` or anything else from wrangler.toml).
+
+```bash
+cd /home/alex/code/yappatron/packages/website
+npm run build
+CLOUDFLARE_API_TOKEN=$(cat ~/.config/cloudflare/pages-token) npx wrangler pages deploy dist --project-name yappatron
+```
+
+### Local Development
+
+```bash
+cd /home/alex/code/yappatron/packages/website
+npm run dev
+# Runs on http://localhost:4321
+# SSH tunnel: ssh -L 4321:localhost:4321 tiny-bat
+```
 
 ## Development (Mac)
 
@@ -34,8 +54,8 @@ Models auto-download to `~/Library/Application Support/FluidAudio/Models/`
 # Build
 swift build
 
-# Deploy website (from VPS)
-npm run build && wrangler pages deploy dist --project-name yappatron
+# Run dev script
+./scripts/run-dev.sh
 ```
 
 ## Dormant (Python Prototype)

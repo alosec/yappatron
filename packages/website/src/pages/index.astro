@@ -1,7 +1,7 @@
 ---
 import content from '../content.json';
 
-const { name, tagline, description, badges, features, steps, requirements, terminal, themes } = content;
+const { name, tagline, description, badges, features, steps, requirements, terminal } = content;
 ---
 
 <html lang="en">
@@ -20,16 +20,10 @@ const { name, tagline, description, badges, features, steps, requirements, termi
     <div class="breath"></div>
     
     <header>
-      <div class="theme-dots">
-        {themes.map((t, i) => (
-          <button 
-            class={`dot ${i === 0 ? 'active' : ''}`} 
-            data-theme={t.id}
-            style={`--dot-color: ${t.accent}`}
-            aria-label={t.id}
-          />
-        ))}
-      </div>
+      <button class="mode-toggle" aria-label="Toggle light/dark mode">
+        <span class="mode-icon sun">&#9728;</span>
+        <span class="mode-icon moon">&#9790;</span>
+      </button>
     </header>
 
     <main>
@@ -64,16 +58,16 @@ const { name, tagline, description, badges, features, steps, requirements, termi
 
       <div class="divider"><span></span></div>
 
-      <section>
-        <h2>how it works</h2>
-        <div class="term">
-          <div class="term-line">
-            {terminal.map(line => {
-              if (line.type === 'prompt') return <span class="t-prompt">{line.text}</span>;
-              if (line.type === 'command') return <span class="t-cmd">{line.text}</span>;
-              if (line.type === 'speech') return <><span class="t-bracket">[speaking] </span><span class="t-speech">{line.text}</span></>;
-              return <span class="t-out">{line.text || '\u00A0'}</span>;
-            })}
+      <section class="demo-section">
+        <div class="video-player" id="video-player">
+          <video id="demo-video" loop playsinline preload="metadata">
+            <source src="/demo.mp4" type="video/mp4" />
+          </video>
+          <button class="play-btn" id="play-btn" aria-label="Play video">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+          </button>
+          <div class="video-progress" id="video-progress">
+            <div class="video-progress-bar" id="progress-bar"></div>
           </div>
         </div>
         <ol class="steps">
@@ -91,8 +85,10 @@ const { name, tagline, description, badges, features, steps, requirements, termi
       <section id="install">
         <h2>install</h2>
         <pre><code>git clone https://github.com/alosec/yappatron
-cd yappatron/packages/app/Yappatron
-swift build</code></pre>
+cd yappatron
+./scripts/run-dev.sh</code></pre>
+        <h3>first run</h3>
+        <p>On first launch, macOS will prompt for Microphone and Accessibility permissions. Grant both, then restart the script. If dictation isn't working, go to System Settings → Privacy & Security → Accessibility, remove yappatron with the minus button, then re-add it with plus.</p>
         <h3>requirements</h3>
         <ul>
           {requirements.map(r => <li>{r}</li>)}
@@ -121,25 +117,31 @@ swift build</code></pre>
       --text-2: #666;
       --text-3: #999;
       --border: #e5e5e5;
-      --accent: #94a3b8;
+      --accent: #a78bfa;
+      --orb-opacity: 0.25;
       --radius: 4px;
     }
 
-    [data-theme="mist"] { --accent: #94a3b8; }
-    [data-theme="lotus"] { --accent: #d97aa6; }
-    [data-theme="ember"] { --accent: #d97706; }
-    [data-theme="moss"] { --accent: #059669; }
-    [data-theme="depth"] { --accent: #0284c7; }
+    /* Dark mode */
+    [data-mode="dark"] {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --text: #e5e5e5;
+      --text-2: #999;
+      --text-3: #666;
+      --border: #2a2a2a;
+      --orb-opacity: 0.35;
+    }
 
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0f0f0f;
-        --surface: #1a1a1a;
-        --text: #e5e5e5;
-        --text-2: #999;
-        --text-3: #666;
-        --border: #2a2a2a;
-      }
+    /* Light mode (explicit) */
+    [data-mode="light"] {
+      --bg: #faf9f7;
+      --surface: #ffffff;
+      --text: #1a1a1a;
+      --text-2: #666;
+      --text-3: #999;
+      --border: #e5e5e5;
+      --orb-opacity: 0.45;
     }
 
     * {
@@ -174,52 +176,75 @@ swift build</code></pre>
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 300px;
-      height: 300px;
-      background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
-      opacity: 0.03;
+      width: 600px;
+      height: 600px;
+      background:
+        radial-gradient(ellipse at 30% 30%, #ff0000 0%, transparent 50%),
+        radial-gradient(ellipse at 70% 30%, #00ff00 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 70%, #0000ff 0%, transparent 50%);
+      opacity: var(--orb-opacity);
       border-radius: 50%;
       pointer-events: none;
-      animation: breathe 8s ease-in-out infinite;
+      animation: breathe 6s ease-in-out infinite, spin 20s linear infinite;
       z-index: -1;
+      filter: blur(60px);
     }
 
     @keyframes breathe {
-      0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.03; }
-      50% { transform: translate(-50%, -50%) scale(1.3); opacity: 0.06; }
+      0%, 100% { transform: translate(-50%, -50%) scale(1) rotate(0deg); opacity: var(--orb-opacity); }
+      50% { transform: translate(-50%, -50%) scale(1.3) rotate(180deg); opacity: calc(var(--orb-opacity) * 1.4); }
+    }
+
+    @keyframes spin {
+      from { transform: translate(-50%, -50%) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotate(360deg); }
     }
 
     /* Header */
     header {
       display: flex;
       justify-content: flex-end;
+      align-items: center;
+      gap: 1rem;
       margin-bottom: 4rem;
     }
 
-    .theme-dots {
-      display: flex;
-      gap: 0.5rem;
-    }
-
-    .dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      border: 1.5px solid var(--border);
-      background: transparent;
+    .mode-toggle {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 0.4rem 0.5rem;
       cursor: pointer;
+      display: flex;
+      align-items: center;
       transition: all 0.2s;
-      padding: 0;
     }
 
-    .dot:hover {
-      border-color: var(--dot-color);
+    .mode-toggle:hover {
+      border-color: var(--accent);
     }
 
-    .dot.active {
-      background: var(--dot-color);
-      border-color: var(--dot-color);
+    .mode-icon {
+      font-size: 0.9rem;
+      line-height: 1;
+      transition: opacity 0.2s;
     }
+
+    .mode-icon.sun {
+      color: #f59e0b;
+    }
+
+    .mode-icon.moon {
+      color: #94a3b8;
+    }
+
+    /* Light mode: show sun, hide moon */
+    [data-mode="light"] .mode-icon.sun { opacity: 1; }
+    [data-mode="light"] .mode-icon.moon { opacity: 0; position: absolute; }
+
+    /* Dark mode: show moon, hide sun */
+    [data-mode="dark"] .mode-icon.sun { opacity: 0; position: absolute; }
+    [data-mode="dark"] .mode-icon.moon { opacity: 1; }
 
     /* Hero */
     .hero {
@@ -238,16 +263,17 @@ swift build</code></pre>
     .tagline {
       font-size: 1.5rem;
       font-style: italic;
-      font-weight: 300;
-      color: var(--text-2);
+      font-weight: 400;
+      color: var(--text);
       margin-bottom: 1rem;
     }
 
     .desc {
-      color: var(--text-2);
+      color: var(--text);
+      opacity: 0.85;
       max-width: 320px;
       margin: 0 auto 1.5rem;
-      font-size: 1rem;
+      font-size: 1.05rem;
     }
 
     .pills {
@@ -260,13 +286,14 @@ swift build</code></pre>
 
     .pill {
       font-family: 'DM Mono', monospace;
-      font-size: 0.7rem;
+      font-size: 0.75rem;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      padding: 0.35rem 0.65rem;
-      border: 1px solid var(--border);
-      border-radius: 2px;
-      color: var(--text-3);
+      padding: 0.4rem 0.75rem;
+      border: 1px solid var(--text-3);
+      border-radius: 3px;
+      color: var(--text);
+      font-weight: 500;
     }
 
     .ctas {
@@ -309,11 +336,11 @@ swift build</code></pre>
     }
 
     h2 {
-      font-size: 0.7rem;
-      font-weight: 400;
+      font-size: 0.8rem;
+      font-weight: 500;
       text-transform: uppercase;
-      letter-spacing: 0.15em;
-      color: var(--text-3);
+      letter-spacing: 0.12em;
+      color: var(--text-2);
       margin-bottom: 1.5rem;
       font-family: 'DM Mono', monospace;
     }
@@ -350,40 +377,134 @@ swift build</code></pre>
       gap: 1.5rem;
     }
 
+    .feature-item {
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--text-3);
+    }
+
+    .feature-item:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
     .feature-item h3 {
-      font-size: 1rem;
-      margin: 0 0 0.25rem;
+      font-size: 1.05rem;
+      font-weight: 500;
+      margin: 0 0 0.35rem;
       color: var(--text);
     }
 
     .feature-item p {
       margin: 0;
       font-size: 0.95rem;
+      color: var(--text);
+      opacity: 0.8;
     }
 
-    /* Terminal */
-    .term {
-      font-family: 'DM Mono', monospace;
-      font-size: 0.8rem;
-      background: var(--surface);
+    /* Video Player */
+    .video-player {
+      position: relative;
+      background: #000;
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 1.25rem;
       margin-bottom: 1.5rem;
-      overflow-x: auto;
+      overflow: hidden;
+      aspect-ratio: 16 / 10;
+      cursor: pointer;
     }
 
-    .term-line {
+    .video-player video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .play-btn {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(255, 255, 255, 0.95);
+      color: #000;
+      cursor: pointer;
       display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.15s, opacity 0.15s;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
     }
 
-    .t-prompt { color: var(--accent); }
-    .t-cmd { color: var(--text); }
-    .t-out { color: var(--text-3); }
-    .t-bracket { color: var(--text-3); }
-    .t-speech { color: var(--accent); }
+    .play-btn svg {
+      width: 28px;
+      height: 28px;
+      margin-left: 4px;
+    }
+
+    .play-btn:hover {
+      transform: translate(-50%, -50%) scale(1.08);
+    }
+
+    .video-player.playing .play-btn {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .video-player:hover.playing .play-btn {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .video-player.playing .play-btn svg {
+      display: none;
+    }
+
+    .video-player.playing .play-btn::before,
+    .video-player.playing .play-btn::after {
+      content: '';
+      width: 8px;
+      height: 24px;
+      background: #000;
+      border-radius: 2px;
+      position: absolute;
+    }
+
+    .video-player.playing .play-btn::before {
+      left: 50%;
+      transform: translateX(-10px);
+    }
+
+    .video-player.playing .play-btn::after {
+      left: 50%;
+      transform: translateX(2px);
+    }
+
+    .video-progress {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.2);
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .video-player:hover .video-progress,
+    .video-player.playing .video-progress {
+      opacity: 1;
+    }
+
+    .video-progress-bar {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.1s linear;
+    }
 
     /* Steps */
     .steps {
@@ -416,7 +537,8 @@ swift build</code></pre>
 
     .steps span {
       font-size: 0.9rem;
-      color: var(--text-2);
+      color: var(--text);
+      opacity: 0.8;
     }
 
     /* Code */
@@ -433,7 +555,8 @@ swift build</code></pre>
 
     code {
       font-family: inherit;
-      color: var(--text-2);
+      color: var(--text);
+      opacity: 0.9;
     }
 
     ul {
@@ -443,23 +566,30 @@ swift build</code></pre>
     ul li {
       padding-left: 1rem;
       position: relative;
-      color: var(--text-2);
-      margin-bottom: 0.35rem;
+      color: var(--text);
+      opacity: 0.85;
+      margin-bottom: 0.5rem;
     }
 
     ul li::before {
       content: '·';
       position: absolute;
       left: 0;
-      color: var(--text-3);
+      color: var(--text-2);
     }
 
     blockquote {
       font-style: italic;
-      color: var(--text-2);
+      color: var(--text);
+      opacity: 0.9;
       padding-left: 1rem;
-      border-left: 2px solid var(--border);
+      border-left: 2px solid var(--text-3);
       margin: 1.5rem 0;
+    }
+
+    section > p {
+      color: var(--text);
+      opacity: 0.85;
     }
 
     /* Footer */
@@ -498,26 +628,55 @@ swift build</code></pre>
       
       .cta { text-align: center; }
       
-      .breath { width: 200px; height: 200px; }
+      .breath { width: 350px; height: 350px; }
       
       .pill { font-size: 0.65rem; padding: 0.3rem 0.5rem; }
     }
   </style>
 
   <script>
-    const dots = document.querySelectorAll('.dot');
-    const saved = localStorage.getItem('yappatron-theme') || 'mist';
-    
-    document.documentElement.dataset.theme = saved;
-    dots.forEach(d => d.classList.toggle('active', d.dataset.theme === saved));
-    
-    dots.forEach(dot => {
-      dot.addEventListener('click', () => {
-        const theme = dot.dataset.theme;
-        document.documentElement.dataset.theme = theme;
-        localStorage.setItem('yappatron-theme', theme);
-        dots.forEach(d => d.classList.toggle('active', d === dot));
-      });
+    const modeToggle = document.querySelector('.mode-toggle');
+
+    // Load saved mode preference (defaults to system preference)
+    const savedMode = localStorage.getItem('yappatron-mode') ||
+      (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+
+    // Apply mode
+    document.documentElement.dataset.mode = savedMode;
+
+    // Light/dark mode toggle
+    modeToggle.addEventListener('click', () => {
+      const currentMode = document.documentElement.dataset.mode;
+      const newMode = currentMode === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.mode = newMode;
+      localStorage.setItem('yappatron-mode', newMode);
+    });
+
+    // Video player
+    const player = document.getElementById('video-player');
+    const video = document.getElementById('demo-video');
+    const playBtn = document.getElementById('play-btn');
+    const progressBar = document.getElementById('progress-bar');
+
+    function togglePlay() {
+      if (video.paused) {
+        video.play();
+        player.classList.add('playing');
+      } else {
+        video.pause();
+        player.classList.remove('playing');
+      }
+    }
+
+    player.addEventListener('click', togglePlay);
+
+    video.addEventListener('timeupdate', () => {
+      const progress = (video.currentTime / video.duration) * 100;
+      progressBar.style.width = progress + '%';
+    });
+
+    video.addEventListener('ended', () => {
+      player.classList.remove('playing');
     });
   </script>
 </body>
