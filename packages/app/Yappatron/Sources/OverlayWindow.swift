@@ -46,7 +46,8 @@ class OverlayViewModel: ObservableObject {
     @Published var isListening = false
     @Published var isSpeaking = false
     @Published var status: StatusType = .idle
-    
+    @Published var orbStyle: OrbStyle = .meshGradient
+
     enum StatusType: Equatable {
         case idle
         case initializing
@@ -55,27 +56,78 @@ class OverlayViewModel: ObservableObject {
         case speaking
         case error(String)
     }
+
+    enum OrbStyle: String, CaseIterable {
+        case meshGradient = "Mesh Gradient"
+        case concentricRings = "Concentric Rings"
+        case particleCloud = "Particle Cloud"
+        case sliceRotate = "Slice & Rotate"
+        case voronoi = "Voronoi Cells"
+        case layeredGradients = "Layered Gradients (Original)"
+    }
 }
 
 struct OverlayView: View {
     @ObservedObject var viewModel: OverlayViewModel
+    @State private var showStylePicker = false
 
     var body: some View {
-        ZStack {
-            // Custom animated orb with layered gradients
-            AnimatedOrbView(colors: orbColors, speed: orbSpeed)
+        VStack(spacing: 12) {
+            ZStack {
+                // Dynamic orb based on selected style
+                Group {
+                    switch viewModel.orbStyle {
+                    case .meshGradient:
+                        MeshGradientOrbView(colors: orbColors, speed: orbSpeed)
+                    case .concentricRings:
+                        ConcentricRingsOrbView(colors: orbColors, speed: orbSpeed)
+                    case .particleCloud:
+                        ParticleCloudOrbView(colors: orbColors, speed: orbSpeed)
+                    case .sliceRotate:
+                        SliceRotateOrbView(colors: orbColors, speed: orbSpeed)
+                    case .voronoi:
+                        VoronoiOrbView(colors: orbColors, speed: orbSpeed)
+                    case .layeredGradients:
+                        LayeredGradientsOrbView(colors: orbColors, speed: orbSpeed)
+                    }
+                }
                 .frame(width: 80, height: 80)
                 .opacity(orbOpacity)
 
-            // Status indicator overlay (for non-speaking states)
-            if !viewModel.isSpeaking {
-                statusIcon
-                    .font(.system(size: 24))
-                    .foregroundStyle(statusColor)
+                // Status indicator overlay (for non-speaking states)
+                if !viewModel.isSpeaking {
+                    statusIcon
+                        .font(.system(size: 24))
+                        .foregroundStyle(statusColor)
+                }
             }
+
+            // Style picker dropdown
+            Menu {
+                ForEach(OverlayViewModel.OrbStyle.allCases, id: \.self) { style in
+                    Button(style.rawValue) {
+                        viewModel.orbStyle = style
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(viewModel.orbStyle.rawValue)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.3))
+                .cornerRadius(4)
+            }
+            .menuStyle(.borderlessButton)
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.isSpeaking)
         .animation(.easeInOut(duration: 0.3), value: viewModel.status)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.orbStyle)
     }
 
     @ViewBuilder
@@ -182,92 +234,260 @@ struct OverlayView: View {
     }
 }
 
-// MARK: - Animated Orb View
+// MARK: - Orb View Implementations
 
-struct AnimatedOrbView: View {
+// 1. MESH GRADIENT ORB - Liquid metal flowing
+@available(macOS 14.0, *)
+struct MeshGradientOrbView: View {
     let colors: [Color]
     let speed: Double
 
-    @State private var rotation1: Double = 0
-    @State private var rotation2: Double = 0
-    @State private var rotation3: Double = 0
-    @State private var rotation4: Double = 0
-    @State private var rotation5: Double = 0
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+
+            // Animated mesh control points for organic flow
+            let phase = time * speed * 0.3
+
+            ZStack {
+                // Base mesh gradient with animated points
+                Circle()
+                    .fill(
+                        MeshGradient(
+                            width: 3,
+                            height: 3,
+                            points: [
+                                // Row 1
+                                .init(0, 0), .init(0.5 + sin(phase) * 0.1, 0), .init(1, 0),
+                                // Row 2
+                                .init(0, 0.5 + cos(phase * 1.3) * 0.1), .init(0.5 + sin(phase * 1.7) * 0.15, 0.5 + cos(phase * 1.5) * 0.15), .init(1, 0.5 + sin(phase * 1.1) * 0.1),
+                                // Row 3
+                                .init(0, 1), .init(0.5 + cos(phase * 1.4) * 0.1, 1), .init(1, 1)
+                            ],
+                            colors: [
+                                colors[0], colors[1], colors[2],
+                                colors[3], colors[4 % colors.count], colors[0],
+                                colors[1], colors[2], colors[3]
+                            ]
+                        )
+                    )
+                    .clipShape(Circle())
+                    .blur(radius: 3)
+            }
+        }
+    }
+}
+
+// 2. CONCENTRIC RINGS ORB - Radar/sound waves
+struct ConcentricRingsOrbView: View {
+    let colors: [Color]
+    let speed: Double
 
     var body: some View {
         TimelineView(.animation) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
 
             ZStack {
-                // Layer 1: Fast rotating angular gradient
-                Circle()
-                    .fill(
-                        AngularGradient(
-                            colors: colors + [colors.first ?? .clear],
-                            center: .center
-                        )
-                    )
-                    .rotationEffect(.degrees(time * 60 * speed))
-                    .blendMode(.screen)
+                ForEach(0..<7, id: \.self) { index in
+                    let phase = time * speed * 2.0 - Double(index) * 0.3
+                    let scale = 0.3 + (sin(phase) * 0.5 + 0.5) * 0.7
+                    let opacity = (cos(phase) * 0.5 + 0.5) * 0.8
 
-                // Layer 2: Medium speed with 3D rotation
-                Circle()
-                    .fill(
-                        AngularGradient(
-                            colors: (colors.reversed() + [colors.last ?? .clear]),
-                            center: .center
-                        )
-                    )
-                    .rotation3DEffect(
-                        .degrees(time * 40 * speed),
-                        axis: (x: 1, y: 1, z: 0)
-                    )
-                    .blendMode(.plusLighter)
+                    Circle()
+                        .stroke(colors[index % colors.count], lineWidth: 3)
+                        .scaleEffect(scale)
+                        .opacity(opacity)
+                }
+            }
+            .clipShape(Circle())
+        }
+    }
+}
 
-                // Layer 3: Slow counter-rotating gradient
-                Circle()
-                    .fill(
-                        AngularGradient(
-                            colors: colors.shuffled() + [colors.first ?? .clear],
-                            center: .center
-                        )
-                    )
-                    .rotationEffect(.degrees(-time * 30 * speed))
-                    .blendMode(.screen)
+// 3. PARTICLE CLOUD ORB - Galaxy/nebula
+struct ParticleCloudOrbView: View {
+    let colors: [Color]
+    let speed: Double
 
-                // Layer 4: Very slow with different axis
-                Circle()
-                    .fill(
-                        AngularGradient(
-                            colors: colors + [colors.first ?? .clear],
-                            center: .center,
-                            startAngle: .degrees(45),
-                            endAngle: .degrees(405)
-                        )
-                    )
-                    .rotation3DEffect(
-                        .degrees(time * 20 * speed),
-                        axis: (x: 0, y: 1, z: 1)
-                    )
-                    .blendMode(.hardLight)
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
 
-                // Layer 5: Radial gradient overlay for glow
+            ZStack {
+                // Background glow
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [
-                                .white.opacity(0.3),
-                                .clear
-                            ],
+                            colors: [colors.first?.opacity(0.4) ?? .clear, .clear],
                             center: .center,
                             startRadius: 10,
                             endRadius: 40
                         )
                     )
-                    .blendMode(.plusLighter)
+
+                // Floating particles
+                ForEach(0..<40, id: \.self) { index in
+                    let angle = Double(index) * 137.5 // Golden angle
+                    let radius = Double(index % 7) * 5.0
+                    let phase = time * speed * 0.5 + Double(index) * 0.1
+
+                    let x = cos(angle + phase) * (radius + sin(phase * 2) * 3)
+                    let y = sin(angle + phase) * (radius + cos(phase * 2) * 3)
+
+                    // Depth effect: particles closer to center are brighter/larger
+                    let depth = 1.0 - (radius / 35.0)
+                    let size = 2.0 + depth * 2.0
+
+                    Circle()
+                        .fill(colors[index % colors.count])
+                        .frame(width: size, height: size)
+                        .offset(x: x, y: y)
+                        .opacity(depth * 0.9)
+                }
+            }
+            .frame(width: 80, height: 80)
+            .clipShape(Circle())
+        }
+    }
+}
+
+// 4. SLICE & ROTATE ORB - Kaleidoscope
+struct SliceRotateOrbView: View {
+    let colors: [Color]
+    let speed: Double
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            let sliceCount = 12
+
+            ZStack {
+                ForEach(0..<sliceCount, id: \.self) { index in
+                    let baseAngle = Angle(degrees: Double(index) * 360.0 / Double(sliceCount))
+                    let rotationOffset = Angle(degrees: time * speed * 30 * (index % 2 == 0 ? 1 : -1))
+                    let pulse = sin(time * speed * 2 + Double(index) * 0.5) * 0.1 + 1.0
+
+                    PieSlice(startAngle: baseAngle, endAngle: baseAngle + .degrees(360.0 / Double(sliceCount)))
+                        .fill(colors[index % colors.count])
+                        .rotationEffect(rotationOffset)
+                        .scaleEffect(pulse)
+                        .opacity(0.8)
+                }
             }
             .clipShape(Circle())
             .blur(radius: 2)
         }
+    }
+}
+
+// 5. VORONOI CELLS ORB - Organic cells
+struct VoronoiOrbView: View {
+    let colors: [Color]
+    let speed: Double
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+
+            // Simplified Voronoi: overlay multiple radial gradients from moving points
+            ZStack {
+                ForEach(0..<8, id: \.self) { index in
+                    let angle = Double(index) * 45.0 + time * speed * 10
+                    let radius = 20 + sin(time * speed + Double(index)) * 10
+
+                    let x = cos(angle * .pi / 180) * radius
+                    let y = sin(angle * .pi / 180) * radius
+
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [colors[index % colors.count], colors[index % colors.count].opacity(0)],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 30
+                            )
+                        )
+                        .offset(x: x, y: y)
+                        .blendMode(.screen)
+                }
+            }
+            .frame(width: 80, height: 80)
+            .clipShape(Circle())
+            .drawingGroup()
+        }
+    }
+}
+
+// 6. LAYERED GRADIENTS ORB - Original implementation
+struct LayeredGradientsOrbView: View {
+    let colors: [Color]
+    let speed: Double
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+
+            ZStack {
+                // Layer 1: Slow rotating radial gradient (base glow)
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: colors + [colors.first?.opacity(0.5) ?? .clear],
+                            center: .center,
+                            startRadius: 5,
+                            endRadius: 50
+                        )
+                    )
+                    .rotationEffect(.degrees(time * 8 * speed))
+                    .opacity(0.7)
+
+                // Layer 2: Counter-rotating radial gradient (shimmer)
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: (colors.reversed() + [colors.last?.opacity(0.3) ?? .clear]),
+                            center: .center,
+                            startRadius: 10,
+                            endRadius: 40
+                        )
+                    )
+                    .rotationEffect(.degrees(-time * 5 * speed))
+                    .opacity(0.5)
+
+                // Layer 3: Very slow angular gradient for color shifts
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: colors + [colors.first ?? .clear],
+                            center: .center
+                        )
+                    )
+                    .rotationEffect(.degrees(time * 3 * speed))
+                    .opacity(0.3)
+            }
+            .clipShape(Circle())
+            .blur(radius: 8)
+        }
+    }
+}
+
+// Helper shape for pie slices
+struct PieSlice: Shape {
+    let startAngle: Angle
+    let endAngle: Angle
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        path.move(to: center)
+        path.addArc(
+            center: center,
+            radius: rect.width / 2,
+            startAngle: startAngle,
+            endAngle: endAngle,
+            clockwise: false
+        )
+        path.closeSubpath()
+        return path
     }
 }
