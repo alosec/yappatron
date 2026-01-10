@@ -26,6 +26,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // Core
     var engine: TranscriptionEngine!
     var inputSimulator: InputSimulator!
+    var batchProcessor: BatchProcessor?
+    var refinementManager: TextRefinementManager?
 
     // Hotkeys
     var togglePauseHotKey: HotKey?
@@ -39,6 +41,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var pressEnterAfterSpeech: Bool {
         get { UserDefaults.standard.bool(forKey: "pressEnterAfterSpeech") }
         set { UserDefaults.standard.set(newValue, forKey: "pressEnterAfterSpeech") }
+    }
+
+    var enableDualPassRefinement: Bool {
+        get { UserDefaults.standard.bool(forKey: "enableDualPassRefinement") }
+        set { UserDefaults.standard.set(newValue, forKey: "enableDualPassRefinement") }
     }
     
     // Combine
@@ -56,6 +63,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         inputSimulator = InputSimulator()
         engine = TranscriptionEngine()
 
+        // Initialize batch processor and refinement manager if dual-pass is enabled
+        if enableDualPassRefinement {
+            batchProcessor = BatchProcessor()
+            if let batchProcessor = batchProcessor {
+                refinementManager = TextRefinementManager(
+                    batchProcessor: batchProcessor,
+                    inputSimulator: inputSimulator
+                )
+
+                // Set up refinement completion callback
+                refinementManager?.onRefinementComplete = { [weak self] refinedText in
+                    self?.handleRefinementComplete(refinedText)
+                }
+            }
+        }
+
         // Request accessibility
         if !InputSimulator.hasAccessibilityPermission() {
             _ = InputSimulator.requestAccessibilityPermissionIfNeeded()
@@ -66,6 +89,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupHotKeys()
         setupEngineCallbacks()
         observeEngineStatus()
+
+        // Initialize batch processor in background (if enabled)
+        if let batchProcessor = batchProcessor {
+            Task {
+                do {
+                    try await batchProcessor.initialize()
+                    NSLog("[Yappatron] Batch processor ready for dual-pass refinement")
+                } catch {
+                    NSLog("[Yappatron] Batch processor initialization failed: \(error.localizedDescription)")
+                    NSLog("[Yappatron] Falling back to streaming-only mode")
+                }
+            }
+        }
 
         // Start the engine
         await engine.start()
@@ -95,6 +131,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         engine.onPartialTranscription = { [weak self] partial in
             Task { @MainActor in
                 self?.handlePartialTranscription(partial)
+            }
+        }
+
+        // Utterance complete callback - triggers batch refinement (if enabled)
+        if enableDualPassRefinement {
+            engine.onUtteranceComplete = { [weak self] audioSamples, streamedText in
+                Task { @MainActor in
+                    self?.refinementManager?.refineTranscription(
+                        audioSamples: audioSamples,
+                        streamedText: streamedText
+                    )
+                }
             }
         }
 
@@ -148,7 +196,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     /// Handle final transcription (EOU detected)
-    /// Pure streaming - just add spacing and optionally press Enter
+    /// Behavior depends on dual-pass refinement setting
     func handleFinalTranscription(_ text: String) {
         guard !isPaused else { return }
 
@@ -164,7 +212,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             currentTypedText = text
         }
 
-        // Add trailing space
+        // If dual-pass refinement is DISABLED, add spacing/enter immediately
+        // If ENABLED, wait for refinement to complete before adding spacing/enter
+        if !enableDualPassRefinement {
+            // Add trailing space
+            inputSimulator.typeString(" ")
+
+            // Press enter if enabled
+            if pressEnterAfterSpeech {
+                inputSimulator.pressEnter()
+            }
+
+            // Reset for next utterance
+            currentTypedText = ""
+        }
+        // If dual-pass enabled, spacing/enter will be added in handleRefinementComplete()
+    }
+
+    /// Called after batch refinement completes (dual-pass mode only)
+    func handleRefinementComplete(_ refinedText: String) {
+        // Update tracking to reflect refined text
+        currentTypedText = refinedText
+
+        // Add trailing space for next utterance
         inputSimulator.typeString(" ")
 
         // Press enter if enabled
@@ -243,6 +313,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let enterItem = NSMenuItem(title: "Press Enter After Speech", action: #selector(toggleEnterAction), keyEquivalent: "")
         enterItem.state = pressEnterAfterSpeech ? .on : .off
         menu.addItem(enterItem)
+
+        let refinementItem = NSMenuItem(title: "Dual-Pass Refinement (Punctuation)", action: #selector(toggleRefinementAction), keyEquivalent: "")
+        refinementItem.state = enableDualPassRefinement ? .on : .off
+        menu.addItem(refinementItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -367,6 +441,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     
     @objc func toggleEnterAction() {
         pressEnterAfterSpeech.toggle()
+    }
+
+    @objc func toggleRefinementAction() {
+        enableDualPassRefinement.toggle()
+
+        // Inform user that they need to restart the app
+        let alert = NSAlert()
+        alert.messageText = "Restart Required"
+        alert.informativeText = "Please restart Yappatron for the dual-pass refinement change to take effect."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc func selectOrbStyle(_ sender: NSMenuItem) {
