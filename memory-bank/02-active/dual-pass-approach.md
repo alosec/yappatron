@@ -1,7 +1,8 @@
-# Alternative: Dual-Pass ASR Processing
+# Dual-Pass ASR Processing
 
 **Created:** 2026-01-09
-**Status:** 🔬 Research - Needs Validation
+**Updated:** 2026-01-09
+**Status:** ✅ IMPLEMENTED - Optional Toggle (Disabled by Default)
 
 ## Concept
 
@@ -298,6 +299,42 @@ All core components implemented and building successfully:
 - Consider full context refinement (currently only refines last utterance)
 - Visual feedback for when refinement is processing
 
+### ✅ Phase 4: Optional Toggle Implementation (COMPLETE - 2026-01-09)
+
+**Status:** Dual-pass refinement is now an optional feature controlled by menu bar toggle.
+
+**Implementation:**
+1. **✅ Menu bar toggle:** "Dual-Pass Refinement (Punctuation)"
+   - Located in menu bar right-click menu
+   - Defaults to OFF (fast streaming-only mode)
+   - Shows checkmark when enabled
+   - Requires app restart to take effect (user is informed via alert)
+
+2. **✅ UserDefaults persistence:**
+   - Setting stored in `enableDualPassRefinement` key
+   - Persists across app restarts
+   - Default value: `false` (disabled)
+
+3. **✅ Conditional initialization:**
+   - Batch processor only initialized when toggle is ON
+   - Refinement manager only created when toggle is ON
+   - No performance/memory overhead when disabled
+   - Graceful fallback if batch processor fails to initialize
+
+4. **✅ Dual behavior in handleFinalTranscription:**
+   - **When disabled:** Immediate spacing/enter after EOU (current fast behavior)
+   - **When enabled:** Wait for refinement, then add spacing/enter
+   - Smooth transition between modes
+
+**Benefits:**
+- Users can choose speed vs accuracy/punctuation
+- No breaking changes to existing workflow
+- Opt-in for power users who want punctuation
+- Fast default for coding/casual use
+- Clean architecture with minimal conditional logic
+
+**Commit:** 16ab51c - Reintroduce dual-pass refinement as optional menu toggle
+
 ### Remaining Tasks (Optional Enhancements)
 
 1. **Performance benchmarking** (nice-to-have metrics)
@@ -310,7 +347,7 @@ All core components implemented and building successfully:
    - [ ] Make EOU debounce configurable
    - [ ] Add visual feedback for refinement state
    - [ ] Consider full-context refinement (beyond single utterance)
-   - [ ] Implement optional fast-only mode (toggle dual-pass)
+   - [x] ~~Implement optional fast-only mode (toggle dual-pass)~~ ✅ DONE
 
 ## Decision Criteria
 
