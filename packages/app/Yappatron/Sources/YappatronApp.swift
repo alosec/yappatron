@@ -250,7 +250,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let orbStyleItem = NSMenuItem(title: "Orb Style", action: nil, keyEquivalent: "")
         let orbStyleMenu = NSMenu()
 
-        let currentStyle = overlayWindow?.overlayViewModel.orbStyle ?? .particleCloud
+        let currentStyle = overlayWindow?.overlayViewModel.orbStyle ?? .voronoi
 
         for style in OverlayViewModel.OrbStyle.allCases {
             let styleItem = NSMenuItem(title: style.rawValue, action: #selector(selectOrbStyle(_:)), keyEquivalent: "")
