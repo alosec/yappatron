@@ -1,42 +1,47 @@
 # Next Up
 
-**Last Updated:** 2026-01-09
+**Last Updated:** 2026-01-09 (evening)
 
 ## Immediate (next session)
-1. **Explore Continuous Diff-Based Editing** — P1, alternative to current dual-pass (yap-diff-edit)
-   - Research text processing models (LLM vs specialized punctuation)
-   - Design TextEditCommand API (Navigate, Select, Replace, Insert)
-   - Prototype diff generator with simple rules
-   - Test command reliability across apps (VSCode, Terminal, Browser, etc.)
-   - Compare UX with current audio re-processing approach
 
-2. **Current System Status Quo** — P2, working well but could be tighter (yap-dual-pass)
-   - Optional: Make EOU debounce configurable
-   - Optional: Add visual feedback for refinement processing
-   - Optional: Benchmark exact latency and memory metrics
-   - Optional: Implement toggle for fast-only mode
+1. **Code Cleanup & Consolidation** — P1 (yap-cleanup)
+   - Remove/disable failed Ollama LLM refinement code
+   - Remove unused dual-pass audio components (BatchProcessor, TextRefinementManager)
+   - Clean up TextEditCommand infrastructure (built but unused)
+   - Consolidate on working pattern: pure streaming transcription
+   - Document what worked vs what didn't
 
-## Soon (next few sessions)
-- **Extend InputSimulator** — Required for diff-based editing (yap-input-api)
-  - Add navigation primitives (Home, End, Cmd+Arrow)
-  - Add selection commands (Shift+Arrow, select word/line)
-  - Add replace-selection operation
-  - Test across different text input contexts
-- Custom vocabulary support (Swift port from Python) (yap-ac58)
-- First-run experience / onboarding
-- App notarization for distribution (yap-a4df) — only needed if distributing publicly
+2. **Current System Validation** — P1 (yap-streaming)
+   - Validate pure streaming-only approach in real usage
+   - Confirm this is the right direction vs post-processing
+   - Streaming ASR quality: ~5.73% WER, good enough without refinement?
 
-## Later
-- Speaker identification (port from Python)
-- Liquid glass overlay (macOS 26 feature)
-- Bottom bar ticker mode
-- Hallucination filtering
+## Future Exploration (not urgent)
+
+3. **On-the-fly Re-editing UX** — P3, interesting but not easily forthcoming (yap-live-edit)
+   - Concept: Continuous text refinement during streaming (not after)
+   - Challenge: Complex to implement, unclear UX benefit
+   - Pause until clearer path emerges
+   - Components built (unused): TextEditCommand, DiffGenerator, EditApplier
+
+## Learnings from Today
+
+**What Worked:**
+- ✅ Pure streaming transcription (fast, accurate, simple)
+- ✅ 320ms chunking with actor-based queue (stable, ~5.73% WER)
+- ✅ Proper .app bundle for permissions
+
+**What Didn't Work:**
+- ❌ Dual-pass audio refinement: Added UX lag (visible backspace/retype), sometimes worse transcription than streaming
+- ❌ Ollama LLM text refinement: Integration issues, didn't trigger reliably, added complexity
+- ❌ Text-based surgical editing: Too complex for unclear benefit
+
+**Key Insight:** Streaming transcription is already quite good; post-processing adds complexity and latency without clear wins.
 
 ## Recently Completed
-- ✓ **Dual-pass ASR tested & validated** (2026-01-09 evening) — "Really quite impressive", UX "really close to exactly what we were hoping" (yap-dual-pass)
-- ✓ **Dual-pass ASR implemented** (2026-01-09 evening) — stream + batch refinement with punctuation (yap-dual-pass)
-- ✓ **TDT punctuation verified** (2026-01-09) — Parakeet TDT outputs punctuation natively
-- ✓ Race condition crash fixed (2026-01-09) — actor-based buffer queue (yap-e049)
-- ✓ 320ms chunk upgrade (2026-01-09) — improved accuracy from ~8-9% to ~5.73% WER (yap-320m)
-- ✓ Permission/input issue resolved (2026-01-09) — proper .app bundle implementation
-- ✓ Accuracy research completed (2026-01-09) — surveyed larger models, punctuation approaches
+- ✓ **Pure streaming-only mode** (2026-01-09 evening) — Disabled all refinement, back to basics
+- ✓ **Ollama LLM integration attempted** (2026-01-09 evening) — Built but didn't work reliably
+- ✓ **Dual-pass audio tested** (2026-01-09 evening) — Worked but caused regressions
+- ✓ **TextEditCommand infrastructure** (2026-01-09 evening) — Built for surgical editing (unused)
+- ✓ **320ms chunk upgrade** (2026-01-09) — Improved accuracy to ~5.73% WER
+- ✓ **Permission/input issue resolved** (2026-01-09) — Proper .app bundle

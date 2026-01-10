@@ -16,9 +16,9 @@ struct RefinementConfig {
     var fallbackOnError: Bool
 
     static let `default` = RefinementConfig(
-        isEnabled: true,
+        isEnabled: false,  // Disabled - pure streaming only
         throttleInterval: 0.5,  // 500ms throttle
-        enabledApps: ["Code", "Visual Studio Code", "TextEdit", "Notes"],
+        enabledApps: [],  // Empty = allow all apps
         fallbackOnError: true
     )
 

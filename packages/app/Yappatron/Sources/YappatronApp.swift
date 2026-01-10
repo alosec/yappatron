@@ -151,7 +151,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     /// Handle partial transcription updates (streaming text)
-    /// Types text immediately and triggers continuous refinement
+    /// Types text immediately (no refinement during streaming)
     func handlePartialTranscription(_ partial: String) {
         guard !isPaused else { return }
 
@@ -160,22 +160,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        // Check if should refine for current app
-        let appName = InputSimulator.getFocusedAppName()
-        let shouldRefine = refinementConfig.shouldRefineForApp(appName)
-
         // Type streaming text immediately
         inputSimulator.applyTextUpdate(from: currentTypedText, to: partial)
         currentTypedText = partial
-
-        // Trigger continuous refinement (async, non-blocking)
-        if shouldRefine {
-            continuousRefinementManager.onPartialUpdate(partial)
-        }
     }
-    
+
     /// Handle final transcription (EOU detected)
-    /// Text is already typed and refined via continuous refinement
+    /// Trigger LLM refinement, then add spacing
     func handleFinalTranscription(_ text: String) {
         guard !isPaused else { return }
 
@@ -191,12 +182,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             currentTypedText = text
         }
 
-        // Add trailing space for next utterance
-        inputSimulator.typeString(" ")
+        // Check if should refine for current app
+        let appName = InputSimulator.getFocusedAppName()
+        if refinementConfig.shouldRefineForApp(appName) {
+            // Trigger LLM refinement (async)
+            // Space and enter will be added after refinement completes
+            continuousRefinementManager.refineCompleteUtterance(text, completion: { [weak self] in
+                // Add trailing space after refinement
+                self?.inputSimulator.typeString(" ")
 
-        // Press enter if enabled
-        if pressEnterAfterSpeech {
-            inputSimulator.pressEnter()
+                // Press enter if enabled
+                if self?.pressEnterAfterSpeech == true {
+                    self?.inputSimulator.pressEnter()
+                }
+            })
+        } else {
+            // No refinement, add space immediately
+            inputSimulator.typeString(" ")
+
+            if pressEnterAfterSpeech {
+                inputSimulator.pressEnter()
+            }
         }
 
         // Reset for next utterance

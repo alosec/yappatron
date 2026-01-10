@@ -1,7 +1,8 @@
 # Exploration: Text-Based Incremental Refinement
 
 **Created:** 2026-01-09 (post dual-pass implementation)
-**Status:** 🤔 Conceptual exploration, needs further clarity
+**Updated:** 2026-01-09 (evening - Ollama implementation complete)
+**Status:** ✅ Implemented with Ollama (EOU-based refinement)
 
 ## The Question
 
@@ -450,11 +451,63 @@ engine.onPartialTranscription = { partial in
 5. **Test command reliability** across target applications
 6. **Compare UX** with current dual-pass audio approach
 
-## User's Current State
+## Implementation Status
 
-**Status:** Vision is now clearer. The goal is continuous diff-based editing with proper text manipulation commands, decoupled from EOU detection, using a lightweight text processing model that runs incrementally.
+### ✅ Phase 1: Ollama Integration (COMPLETE - 2026-01-09)
 
-**Key insight:** The "tightness" comes from streaming and refinement being interleaved through a proper text editing API, not bolted together through delete/retype.
+**Implemented:** EOU-based LLM refinement using Ollama
+
+**Components created:**
+1. **PunctuationModel** ([PunctuationModel.swift](../../packages/app/Yappatron/Sources/Refinement/PunctuationModel.swift))
+   - Actor for text-to-text refinement
+   - Primary: Ollama API with phi3:mini model
+   - Fallback: Enhanced rule-based (70+ contraction fixes, smart punctuation)
+   - Response cleaning (removes LLM artifacts)
+
+2. **ContinuousRefinementManager** ([ContinuousRefinementManager.swift](../../packages/app/Yappatron/Sources/Refinement/ContinuousRefinementManager.swift))
+   - Coordinates refinement at EOU boundaries
+   - Tracks context (previous refined text)
+   - Throttles requests (500ms minimum)
+   - Simple text replacement via InputSimulator.applyTextUpdate()
+
+3. **RefinementConfig** ([RefinementConfig.swift](../../packages/app/Yappatron/Sources/Refinement/RefinementConfig.swift))
+   - Enable/disable toggle
+   - App whitelist (VSCode, TextEdit, Notes, Code)
+   - Throttle interval configuration
+
+**Ollama setup:**
+```bash
+brew install ollama
+brew services start ollama
+ollama pull phi3:mini  # 2.2GB, 3.8B params
+```
+
+**Integration:**
+- Triggers at EOU in `YappatronApp.handleFinalTranscription()`
+- Uses existing `InputSimulator.applyTextUpdate()` for smooth replacement
+- Gracefully falls back to rules when Ollama unavailable
+
+**Status:**
+- ✅ Build successful
+- ✅ App running with refinement enabled
+- ⏳ Awaiting user testing with real dictation
+
+### Future: Continuous Diff-Based Editing
+
+**Vision:** Eventually move to continuous diff-based editing with proper text manipulation commands (Home, End, Shift+Arrow selection, etc.)
+
+**Goal:** Streaming and refinement interleaved through proper text editing API, not bolted together through delete/retype.
+
+**Status:** EOU-based approach is simpler starting point. Continuous approach is "North Star goal" for later.
+
+**Components already built (unused):**
+- TextEditCommand protocol suite
+- DiffGenerator actor
+- EditApplier with queuing
+- TextStateTracker with versioning
+- InputSimulator navigation/selection extensions
+
+**Trade-off:** EOU-based is simpler and may be "good enough" - continuous refinement during streaming is harder and may not provide significant UX improvement.
 
 ## References
 

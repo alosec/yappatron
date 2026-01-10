@@ -1,83 +1,92 @@
 import Foundation
 
-/// Coordinates continuous text refinement during streaming
+/// Coordinates text refinement using LLM
+/// Processes full utterances on natural boundaries (EOU)
 @MainActor
 class ContinuousRefinementManager {
 
     private let punctuationModel: PunctuationModel
-    private let diffGenerator: DiffGenerator
-    private let editApplier: EditApplier
-    private let textTracker: TextStateTracker
+    private let inputSimulator: InputSimulator
     private let config: RefinementConfig
 
+    // Track current state
+    private var currentStreamedText: String = ""
+    private var lastRefinedText: String = ""
+
     // Throttling
-    private var lastRefinementTime: Date?
     private var pendingRefinementTask: Task<Void, Never>?
 
     init(
         inputSimulator: InputSimulator,
         config: RefinementConfig = .default
     ) {
-        self.punctuationModel = PunctuationModel(modelType: .rules)
-        self.diffGenerator = DiffGenerator()
-        self.editApplier = EditApplier(simulator: inputSimulator)
-        self.textTracker = TextStateTracker()
+        self.punctuationModel = PunctuationModel()
+        self.inputSimulator = inputSimulator
         self.config = config
     }
 
-    /// Called when partial transcription updates
-    func onPartialUpdate(_ newText: String) {
-        guard config.isEnabled else { return }
+    /// Called when utterance completes (EOU detected)
+    /// This is when we apply LLM refinement
+    func refineCompleteUtterance(_ streamedText: String, completion: (() -> Void)? = nil) {
+        log("[ContinuousRefinement] refineCompleteUtterance called with: '\(streamedText)'")
 
-        textTracker.updateText(newText)
+        guard config.isEnabled else {
+            log("[ContinuousRefinement] Config disabled")
+            completion?()
+            return
+        }
+        guard !streamedText.isEmpty else {
+            log("[ContinuousRefinement] Empty text")
+            completion?()
+            return
+        }
+
+        currentStreamedText = streamedText
 
         // Cancel any pending refinement
         pendingRefinementTask?.cancel()
 
-        // Throttle refinement
-        if let lastTime = lastRefinementTime,
-           Date().timeIntervalSince(lastTime) < config.throttleInterval {
-            return
-        }
+        log("[ContinuousRefinement] Scheduling refinement task")
 
         // Schedule refinement
         pendingRefinementTask = Task { [weak self] in
-            await self?.performRefinement(originalText: newText)
+            log("[ContinuousRefinement] Refinement task started")
+            await self?.performRefinement()
+            // Call completion on main thread after refinement
+            await MainActor.run {
+                log("[ContinuousRefinement] Calling completion callback")
+                completion?()
+            }
         }
     }
 
-    /// Perform refinement asynchronously
-    private func performRefinement(originalText: String) async {
-        lastRefinementTime = Date()
+    /// Perform LLM-based refinement
+    private func performRefinement() async {
+        let originalText = currentStreamedText
 
-        // Get refined version from punctuation model
-        let refinedText = await punctuationModel.refine(originalText)
+        // Get refined version from LLM
+        let refinedText = await punctuationModel.refine(originalText, context: lastRefinedText)
 
         // Check if anything changed
-        guard refinedText != originalText else { return }
+        guard refinedText != originalText else {
+            log("[ContinuousRefinement] No changes needed for: '\(originalText)'")
+            return
+        }
 
         log("[ContinuousRefinement] Refining '\(originalText)' → '\(refinedText)'")
 
-        // Generate edit commands
-        let commands = await diffGenerator.generateCommands(
-            from: originalText,
-            to: refinedText,
-            currentCursorAtEnd: textTracker.cursorAtEnd
-        )
+        // Simple replacement: delete old, type new
+        // Use existing applyTextUpdate which does smart prefix-based diff
+        inputSimulator.applyTextUpdate(from: originalText, to: refinedText)
 
-        // Apply edits
-        let version = textTracker.getCurrentVersion()
-        await editApplier.apply(commands, version: version)
-
-        // Update tracked text
-        textTracker.updateText(refinedText)
+        // Update context for next utterance
+        lastRefinedText = refinedText
     }
 
-    /// Reset for new utterance
+    /// Reset for new session
     func reset() {
         pendingRefinementTask?.cancel()
-        textTracker.reset()
-        editApplier.clearQueue()
-        lastRefinementTime = nil
+        currentStreamedText = ""
+        lastRefinedText = ""
     }
 }
