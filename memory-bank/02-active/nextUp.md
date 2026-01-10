@@ -1,17 +1,14 @@
 # Next Up
 
-**Last Updated:** 2026-01-09 (evening - post-testing)
+**Last Updated:** 2026-01-09 (late evening - post-cleanup)
 
 ## Immediate (next session)
 
-1. **Code Cleanup & Consolidation** — P1 (yap-87cd)
-   - Remove unused refinement infrastructure:
-     - PunctuationModel (Ollama integration)
-     - ContinuousRefinementManager
-     - TextEditCommand suite, DiffGenerator, EditApplier
-     - BatchProcessor and dual-pass audio code
-   - Keep codebase simple and focused on pure streaming
-   - Document what was tried and why it was removed
+1. **Visual Effects: Siri-like Orb Animation** — P2 (yap-dec5)
+   - Integrate metasidd/Orb library
+   - Audio-reactive morphing animations
+   - Psychedelic color palette
+   - Satisfying finalization effects
 
 ## Monitoring
 
@@ -46,9 +43,9 @@
 **Key Insight:** Streaming transcription is already quite good; post-processing adds complexity and latency without clear wins.
 
 ## Recently Completed
-- ✓ **Pure streaming-only mode** (2026-01-09 evening) — Disabled all refinement, back to basics
-- ✓ **Ollama LLM integration attempted** (2026-01-09 evening) — Built but didn't work reliably
-- ✓ **Dual-pass audio tested** (2026-01-09 evening) — Worked but caused regressions
-- ✓ **TextEditCommand infrastructure** (2026-01-09 evening) — Built for surgical editing (unused)
+- ✓ **SCORCHED EARTH CLEANUP** (2026-01-09 late evening) — Removed ALL refinement infrastructure (~1,175 lines, 55% reduction)
+- ✓ **Pure streaming commitment** (2026-01-09 evening) — 100% streaming only, zero complexity
+- ✓ **Task tracking setup** (2026-01-09 evening) — Fixed td/tv in PATH, organized backlog
+- ✓ **Visual effects research** (2026-01-09 evening) — Found metasidd/Orb library, ready to implement
 - ✓ **320ms chunk upgrade** (2026-01-09) — Improved accuracy to ~5.73% WER
 - ✓ **Permission/input issue resolved** (2026-01-09) — Proper .app bundle
