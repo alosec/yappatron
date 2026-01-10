@@ -239,13 +239,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
         
         menu.addItem(NSMenuItem.separator())
-        
+
         let enterItem = NSMenuItem(title: "Press Enter After Speech", action: #selector(toggleEnterAction), keyEquivalent: "")
         enterItem.state = pressEnterAfterSpeech ? .on : .off
         menu.addItem(enterItem)
 
         menu.addItem(NSMenuItem.separator())
-        
+
+        // Orb Style submenu
+        let orbStyleItem = NSMenuItem(title: "Orb Style", action: nil, keyEquivalent: "")
+        let orbStyleMenu = NSMenu()
+
+        let currentStyle = overlayWindow?.overlayViewModel.orbStyle ?? .particleCloud
+
+        for style in OverlayViewModel.OrbStyle.allCases {
+            let styleItem = NSMenuItem(title: style.rawValue, action: #selector(selectOrbStyle(_:)), keyEquivalent: "")
+            styleItem.representedObject = style
+            styleItem.state = (style == currentStyle) ? .on : .off
+            orbStyleMenu.addItem(styleItem)
+        }
+
+        orbStyleItem.submenu = orbStyleMenu
+        menu.addItem(orbStyleItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         if overlayWindow?.isVisible == true {
             menu.addItem(NSMenuItem(title: "Hide Indicator", action: #selector(hideOverlayAction), keyEquivalent: ""))
         } else {
@@ -351,10 +369,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         pressEnterAfterSpeech.toggle()
     }
 
+    @objc func selectOrbStyle(_ sender: NSMenuItem) {
+        if let style = sender.representedObject as? OverlayViewModel.OrbStyle {
+            overlayWindow?.overlayViewModel.orbStyle = style
+        }
+    }
+
     @objc func showOverlayAction() {
         showOverlay()
     }
-    
+
     @objc func hideOverlayAction() {
         overlayWindow?.orderOut(nil)
     }

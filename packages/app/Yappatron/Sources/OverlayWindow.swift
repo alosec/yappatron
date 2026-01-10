@@ -46,7 +46,7 @@ class OverlayViewModel: ObservableObject {
     @Published var isListening = false
     @Published var isSpeaking = false
     @Published var status: StatusType = .idle
-    @Published var orbStyle: OrbStyle = .meshGradient
+    @Published var orbStyle: OrbStyle = .particleCloud
 
     enum StatusType: Equatable {
         case idle
@@ -69,61 +69,39 @@ class OverlayViewModel: ObservableObject {
 
 struct OverlayView: View {
     @ObservedObject var viewModel: OverlayViewModel
-    @State private var showStylePicker = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            ZStack {
-                // Dynamic orb based on selected style
-                Group {
-                    switch viewModel.orbStyle {
-                    case .meshGradient:
+        ZStack {
+            // Dynamic orb based on selected style
+            Group {
+                switch viewModel.orbStyle {
+                case .meshGradient:
+                    if #available(macOS 15.0, *) {
                         MeshGradientOrbView(colors: orbColors, speed: orbSpeed)
-                    case .concentricRings:
-                        ConcentricRingsOrbView(colors: orbColors, speed: orbSpeed)
-                    case .particleCloud:
+                    } else {
                         ParticleCloudOrbView(colors: orbColors, speed: orbSpeed)
-                    case .sliceRotate:
-                        SliceRotateOrbView(colors: orbColors, speed: orbSpeed)
-                    case .voronoi:
-                        VoronoiOrbView(colors: orbColors, speed: orbSpeed)
-                    case .layeredGradients:
-                        LayeredGradientsOrbView(colors: orbColors, speed: orbSpeed)
                     }
-                }
-                .frame(width: 80, height: 80)
-                .opacity(orbOpacity)
-
-                // Status indicator overlay (for non-speaking states)
-                if !viewModel.isSpeaking {
-                    statusIcon
-                        .font(.system(size: 24))
-                        .foregroundStyle(statusColor)
+                case .concentricRings:
+                    ConcentricRingsOrbView(colors: orbColors, speed: orbSpeed)
+                case .particleCloud:
+                    ParticleCloudOrbView(colors: orbColors, speed: orbSpeed)
+                case .sliceRotate:
+                    SliceRotateOrbView(colors: orbColors, speed: orbSpeed)
+                case .voronoi:
+                    VoronoiOrbView(colors: orbColors, speed: orbSpeed)
+                case .layeredGradients:
+                    LayeredGradientsOrbView(colors: orbColors, speed: orbSpeed)
                 }
             }
+            .frame(width: 80, height: 80)
+            .opacity(orbOpacity)
 
-            // Style picker dropdown
-            Menu {
-                ForEach(OverlayViewModel.OrbStyle.allCases, id: \.self) { style in
-                    Button(style.rawValue) {
-                        viewModel.orbStyle = style
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(viewModel.orbStyle.rawValue)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.black.opacity(0.3))
-                .cornerRadius(4)
+            // Status indicator overlay (for non-speaking states)
+            if !viewModel.isSpeaking {
+                statusIcon
+                    .font(.system(size: 24))
+                    .foregroundStyle(statusColor)
             }
-            .menuStyle(.borderlessButton)
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.isSpeaking)
         .animation(.easeInOut(duration: 0.3), value: viewModel.status)
@@ -236,8 +214,8 @@ struct OverlayView: View {
 
 // MARK: - Orb View Implementations
 
-// 1. MESH GRADIENT ORB - Liquid metal flowing
-@available(macOS 14.0, *)
+// 1. MESH GRADIENT ORB - Liquid metal flowing (requires macOS 15+)
+@available(macOS 15.0, *)
 struct MeshGradientOrbView: View {
     let colors: [Color]
     let speed: Double
@@ -245,35 +223,44 @@ struct MeshGradientOrbView: View {
     var body: some View {
         TimelineView(.animation) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
-
-            // Animated mesh control points for organic flow
             let phase = time * speed * 0.3
 
-            ZStack {
-                // Base mesh gradient with animated points
-                Circle()
-                    .fill(
-                        MeshGradient(
-                            width: 3,
-                            height: 3,
-                            points: [
-                                // Row 1
-                                .init(0, 0), .init(0.5 + sin(phase) * 0.1, 0), .init(1, 0),
-                                // Row 2
-                                .init(0, 0.5 + cos(phase * 1.3) * 0.1), .init(0.5 + sin(phase * 1.7) * 0.15, 0.5 + cos(phase * 1.5) * 0.15), .init(1, 0.5 + sin(phase * 1.1) * 0.1),
-                                // Row 3
-                                .init(0, 1), .init(0.5 + cos(phase * 1.4) * 0.1, 1), .init(1, 1)
-                            ],
-                            colors: [
-                                colors[0], colors[1], colors[2],
-                                colors[3], colors[4 % colors.count], colors[0],
-                                colors[1], colors[2], colors[3]
-                            ]
-                        )
+            // Pre-calculate animated points to help compiler
+            let p00 = SIMD2<Float>(0, 0)
+            let p10 = SIMD2<Float>(Float(0.5 + sin(phase) * 0.1), 0)
+            let p20 = SIMD2<Float>(1, 0)
+
+            let p01 = SIMD2<Float>(0, Float(0.5 + cos(phase * 1.3) * 0.1))
+            let p11 = SIMD2<Float>(Float(0.5 + sin(phase * 1.7) * 0.15), Float(0.5 + cos(phase * 1.5) * 0.15))
+            let p21 = SIMD2<Float>(1, Float(0.5 + sin(phase * 1.1) * 0.1))
+
+            let p02 = SIMD2<Float>(0, 1)
+            let p12 = SIMD2<Float>(Float(0.5 + cos(phase * 1.4) * 0.1), 1)
+            let p22 = SIMD2<Float>(1, 1)
+
+            let meshPoints: [SIMD2<Float>] = [
+                p00, p10, p20,
+                p01, p11, p21,
+                p02, p12, p22
+            ]
+
+            let meshColors: [Color] = [
+                colors[0], colors[1], colors[2],
+                colors[3], colors[4 % colors.count], colors[0],
+                colors[1], colors[2], colors[3]
+            ]
+
+            Circle()
+                .fill(
+                    MeshGradient(
+                        width: 3,
+                        height: 3,
+                        points: meshPoints,
+                        colors: meshColors
                     )
-                    .clipShape(Circle())
-                    .blur(radius: 3)
-            }
+                )
+                .clipShape(Circle())
+                .blur(radius: 3)
         }
     }
 }
