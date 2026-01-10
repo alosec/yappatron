@@ -1,15 +1,17 @@
 # Active Work
 
-**Last Updated:** 2026-01-09 15:45 UTC
+**Last Updated:** 2026-01-10 05:00 UTC (2026-01-09 late night local)
 
 ## Current Focus
 
-System is stable and working well. Ready to add configurability and explore further accuracy improvements.
+System is stable with dual-pass refinement now available as optional toggle. Testing enabled mode for punctuation quality.
 
 ### What's Done
 - ✅ Swift rewrite with FluidAudio streaming
 - ✅ 320ms chunk size upgrade for improved accuracy (tested, confirmed working)
 - ✅ Ghost text with diff-based corrections
+- ✅ **Orb animations:** Voronoi Cells (default) + Concentric Rings with RGB palette
+- ✅ **Dual-pass refinement:** Optional toggle for punctuation/capitalization (disabled by default)
 - ✅ Website deployed to yappatron.pages.dev
 - ✅ Editorial redesign: Newsreader serif, breathing animation, light/dark mode
 - ✅ Content loaded from JSON at build time
@@ -20,12 +22,14 @@ System is stable and working well. Ready to add configurability and explore furt
 - ✅ System tested and passes quality bar for accuracy/speed balance
 
 ### In Progress
-- Nothing currently blocking
+- 🧪 Testing dual-pass refinement in real usage (user is actively testing)
 
 ### Next
+- [ ] Evaluate dual-pass refinement quality and performance
+- [ ] Consider visual feedback for when refinement is processing
 - [ ] Add chunk size configurability (user settings: 160ms/320ms)
 - [ ] Clean up excessive logging
-- [ ] Explore even slower/larger models for accuracy
+- [ ] Explore larger batch models (1.1B) if CoreML conversion becomes available
 - [ ] Custom vocabulary (Swift port)
 - [ ] App notarization
 - [ ] Performance metrics collection

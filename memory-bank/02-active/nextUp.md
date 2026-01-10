@@ -1,14 +1,20 @@
 # Next Up
 
-**Last Updated:** 2026-01-09 (late evening - post-cleanup)
+**Last Updated:** 2026-01-09 (late night - post dual-pass implementation)
 
 ## Immediate (next session)
 
-1. **Visual Effects: Siri-like Orb Animation** — P2 (yap-dec5)
-   - Integrate metasidd/Orb library
-   - Audio-reactive morphing animations
-   - Psychedelic color palette
-   - Satisfying finalization effects
+1. **Test dual-pass refinement in real usage** — P1
+   - Enable "Dual-Pass Refinement (Punctuation)" toggle in menu
+   - Test with various dictation scenarios
+   - Monitor performance and battery impact
+   - Evaluate punctuation quality vs streaming-only mode
+
+2. **Monitor and tune** — P2
+   - Watch for any stability issues
+   - Consider making EOU debounce configurable
+   - Add visual feedback when refinement is processing
+   - Profile memory usage over extended sessions
 
 ## Monitoring
 
@@ -35,17 +41,18 @@
 - ✅ 320ms chunking with actor-based queue (stable, ~5.73% WER)
 - ✅ Proper .app bundle for permissions
 
-**What Didn't Work:**
-- ❌ Dual-pass audio refinement: Added UX lag (visible backspace/retype), sometimes worse transcription than streaming
+**What Didn't Work (Initially):**
+- ❌ Dual-pass audio refinement (always-on): Added UX lag (visible backspace/retype), sometimes worse transcription than streaming
 - ❌ Ollama LLM text refinement: Integration issues, didn't trigger reliably, added complexity
 - ❌ Text-based surgical editing: Too complex for unclear benefit
 
-**Key Insight:** Streaming transcription is already quite good; post-processing adds complexity and latency without clear wins.
+**Key Insight:** Streaming transcription is already quite good; post-processing adds complexity and latency without clear wins. **However**, dual-pass is now available as an **optional toggle** for users who want punctuation/capitalization and improved accuracy.
 
 ## Recently Completed
-- ✓ **SCORCHED EARTH CLEANUP** (2026-01-09 late evening) — Removed ALL refinement infrastructure (~1,175 lines, 55% reduction)
-- ✓ **Pure streaming commitment** (2026-01-09 evening) — 100% streaming only, zero complexity
+- ✓ **Dual-pass optional toggle** (2026-01-09 late night) — Reintroduced as optional menu feature (disabled by default)
+- ✓ **Visual effects: Orb animations** (2026-01-09 late evening) — Voronoi Cells (default) + Concentric Rings, psychedelic RGB
+- ✓ **SCORCHED EARTH CLEANUP** (2026-01-09 late evening) — Removed ALL always-on refinement infrastructure
+- ✓ **Pure streaming commitment** (2026-01-09 evening) — Fast streaming as default mode
 - ✓ **Task tracking setup** (2026-01-09 evening) — Fixed td/tv in PATH, organized backlog
-- ✓ **Visual effects research** (2026-01-09 evening) — Found metasidd/Orb library, ready to implement
 - ✓ **320ms chunk upgrade** (2026-01-09) — Improved accuracy to ~5.73% WER
 - ✓ **Permission/input issue resolved** (2026-01-09) — Proper .app bundle
