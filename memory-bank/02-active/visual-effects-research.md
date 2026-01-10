@@ -1,22 +1,30 @@
 # Visual Effects Research: Siri-like Orb Animation
 
 **Created:** 2026-01-09
-**Status:** Ready for Implementation
+**Updated:** 2026-01-09
+**Status:** Blocked - Need macOS-Native Approach
 **Epic:** yap-dec5
 
-## Chosen Approach: metasidd/Orb
+## ❌ BLOCKER: metasidd/Orb (iOS-Only)
 
 **GitHub:** [metasidd/Orb](https://github.com/metasidd/Orb)
 **License:** MIT
-**Platform:** macOS 14+, iOS 17+
+**Platform:** ~~macOS 14+~~, iOS 17+ ONLY
 
-### Why This Library
+### Why This Library DOESN'T Work
 
-- Pure SwiftUI (no Metal complexity to start)
-- 10 configuration parameters for customization
-- Beautiful out-of-the-box Siri-like effect
-- Layered approach: gradients + wavy blobs + particles + glow
-- Easy audio reactivity integration
+**CRITICAL:** Despite README claiming macOS 14+ support, the library uses UIKit APIs that don't exist on macOS:
+- `UIColor` (iOS-only, use `NSColor` on macOS)
+- `UIGraphicsImageRenderer` (iOS-only)
+- `UIBezierPath` (iOS-only, use `NSBezierPath` on macOS)
+
+**Build Errors:**
+- Cannot find type 'UIColor' in scope
+- Cannot find 'UIGraphicsImageRenderer' in scope
+- Cannot find 'UIBezierPath' in scope
+
+**Attempted:** 2026-01-09 - Integration failed, library incompatible with macOS
+**Commit:** ab2b6a8 - Documented blocker and reverted
 
 ### Architecture
 
@@ -42,22 +50,60 @@ OrbConfiguration(
 )
 ```
 
-## Implementation Plan
+## macOS-Native Approaches to Explore
 
-### Phase 1: Basic Integration (yap-dec5.3.1)
-- Add metasidd/Orb via Swift Package Manager
-- Replace current Circle in OverlayView with OrbView
-- Configure psychedelic color palette
+### Option 1: Pure SwiftUI Animation (Recommended Start)
+Based on [Siri Animation Gist](https://gist.github.com/amosgyamfi/b611c216604fd40a5aad2673fc5cf0b4):
+- Layered circles with rotation3DEffect
+- Continuous rotation animations (12s easing loop)
+- Hue rotation for color morphing
+- Blend modes (.hardLight, .difference)
+- Timeline animation with autoreverses: false
 
-### Phase 2: Audio Reactivity (yap-dec5.3.2)
-- Extract audio amplitude from TranscriptionEngine
-- Pass to OverlayViewModel
-- Modulate orb scale, glow intensity, speed based on amplitude
+**Pros:**
+- Pure SwiftUI, fully macOS compatible
+- No external dependencies
+- 60fps smooth on modern Macs
 
-### Phase 3: State Animations (yap-dec5.5)
-- Idle: Subtle breathing
-- Speaking: Active morphing with audio reactivity
-- Finalization: Burst effect when Enter pressed
+**Cons:**
+- More manual implementation needed
+- No wavy blob morphing (static shapes rotating)
+
+### Option 2: Metal Shaders (Advanced)
+Use [twostraws/Inferno](https://github.com/twostraws/Inferno) for Metal shaders:
+- Circle wave shader for morphing
+- Bubble shader for iridescent effect
+- Full GPU acceleration (120fps capable)
+
+**Pros:**
+- Most performant
+- Most visually stunning
+- Full control over effects
+
+**Cons:**
+- More complex to implement
+- Metal shader knowledge required
+
+### Option 3: Custom Path Animation
+- Use SwiftUI Path and GeometryEffect
+- Animate control points for organic morphing
+- Layer multiple paths with different animations
+
+**Pros:**
+- True morphing (not just rotation)
+- SwiftUI-native
+- Full customization
+
+**Cons:**
+- Complex path calculations
+- Need to implement morphing algorithm
+
+## Next Steps
+
+1. **Revert Orb integration** - Remove dependency, restore previous implementation
+2. **Implement Option 1 (Pure SwiftUI)** - Start with rotating layered circles approach
+3. **Test and iterate** - Get basic animation working first
+4. **Consider Option 2/3** - If more organic feel needed later
 
 ## Future Enhancements
 

@@ -17,15 +17,6 @@
         "revision" : "a3cf605d7a96f6ff50e04fcb6dea6e2613cfcbe4",
         "version" : "0.2.1"
       }
-    },
-    {
-      "identity" : "orb",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/metasidd/Orb.git",
-      "state" : {
-        "revision" : "8c5dda85e55638893f37657b56558968c3e11409",
-        "version" : "0.2.0"
-      }
     }
   ],
   "version" : 2

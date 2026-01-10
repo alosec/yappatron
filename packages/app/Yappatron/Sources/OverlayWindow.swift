@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import Orb
 
 /// Minimal overlay - just a status indicator, not text display
 class OverlayWindow: NSWindow {
@@ -63,8 +62,8 @@ struct OverlayView: View {
 
     var body: some View {
         ZStack {
-            // Use the Orb library for beautiful animated orb
-            OrbView(configuration: orbConfiguration)
+            // Custom animated orb with layered gradients
+            AnimatedOrbView(colors: orbColors, speed: orbSpeed)
                 .frame(width: 80, height: 80)
                 .opacity(orbOpacity)
 
@@ -119,71 +118,56 @@ struct OverlayView: View {
         }
     }
 
-    // Orb configuration based on state
-    private var orbConfiguration: OrbConfiguration {
+    // Orb colors based on state
+    private var orbColors: [Color] {
         switch viewModel.status {
         case .speaking:
             // Vibrant RGB shifting palette when speaking
-            return OrbConfiguration(
-                backgroundColors: [
-                    Color(red: 1.0, green: 0.0, blue: 0.3),  // Red-pink
-                    Color(red: 0.3, green: 0.0, blue: 1.0),  // Blue-purple
-                    Color(red: 0.0, green: 1.0, blue: 0.5),  // Green-cyan
-                    Color(red: 1.0, green: 0.2, blue: 0.0),  // Red-orange
-                    Color(red: 0.0, green: 0.5, blue: 1.0)   // Blue
-                ],
-                glowColor: .white,
-                coreGlowIntensity: 1.2,
-                speed: 60
-            )
+            return [
+                Color(red: 1.0, green: 0.0, blue: 0.3),  // Red-pink
+                Color(red: 0.3, green: 0.0, blue: 1.0),  // Blue-purple
+                Color(red: 0.0, green: 1.0, blue: 0.5),  // Green-cyan
+                Color(red: 1.0, green: 0.2, blue: 0.0),  // Red-orange
+                Color(red: 0.0, green: 0.5, blue: 1.0)   // Blue
+            ]
         case .listening:
             // Subtle green glow when listening
-            return OrbConfiguration(
-                backgroundColors: [
-                    Color(red: 0.0, green: 1.0, blue: 0.4),
-                    Color(red: 0.0, green: 0.8, blue: 0.6),
-                    Color(red: 0.2, green: 1.0, blue: 0.5)
-                ],
-                glowColor: .green,
-                coreGlowIntensity: 0.8,
-                speed: 40
-            )
+            return [
+                Color(red: 0.0, green: 1.0, blue: 0.4),
+                Color(red: 0.0, green: 0.8, blue: 0.6),
+                Color(red: 0.2, green: 1.0, blue: 0.5)
+            ]
         case .idle:
             // Dim RGB when idle
-            return OrbConfiguration(
-                backgroundColors: [
-                    Color(red: 0.3, green: 0.3, blue: 0.5),
-                    Color(red: 0.4, green: 0.3, blue: 0.4),
-                    Color(red: 0.3, green: 0.4, blue: 0.4)
-                ],
-                glowColor: .white,
-                coreGlowIntensity: 0.3,
-                speed: 20
-            )
+            return [
+                Color(red: 0.3, green: 0.3, blue: 0.5),
+                Color(red: 0.4, green: 0.3, blue: 0.4),
+                Color(red: 0.3, green: 0.4, blue: 0.4)
+            ]
         case .error:
             // Red warning
-            return OrbConfiguration(
-                backgroundColors: [
-                    Color(red: 1.0, green: 0.0, blue: 0.0),
-                    Color(red: 0.8, green: 0.0, blue: 0.2),
-                    Color(red: 1.0, green: 0.2, blue: 0.0)
-                ],
-                glowColor: .red,
-                coreGlowIntensity: 1.5,
-                speed: 80
-            )
+            return [
+                Color(red: 1.0, green: 0.0, blue: 0.0),
+                Color(red: 0.8, green: 0.0, blue: 0.2),
+                Color(red: 1.0, green: 0.2, blue: 0.0)
+            ]
         case .initializing, .downloading:
             // Orange/amber loading
-            return OrbConfiguration(
-                backgroundColors: [
-                    Color(red: 1.0, green: 0.6, blue: 0.0),
-                    Color(red: 1.0, green: 0.4, blue: 0.2),
-                    Color(red: 1.0, green: 0.5, blue: 0.0)
-                ],
-                glowColor: .orange,
-                coreGlowIntensity: 1.0,
-                speed: 50
-            )
+            return [
+                Color(red: 1.0, green: 0.6, blue: 0.0),
+                Color(red: 1.0, green: 0.4, blue: 0.2),
+                Color(red: 1.0, green: 0.5, blue: 0.0)
+            ]
+        }
+    }
+
+    private var orbSpeed: Double {
+        switch viewModel.status {
+        case .speaking: return 1.5
+        case .listening: return 1.0
+        case .idle: return 0.5
+        case .error: return 2.0
+        case .initializing, .downloading: return 1.2
         }
     }
 
@@ -194,6 +178,96 @@ struct OverlayView: View {
         case .idle: return 0.3
         case .error: return 0.9
         case .initializing, .downloading: return 0.6
+        }
+    }
+}
+
+// MARK: - Animated Orb View
+
+struct AnimatedOrbView: View {
+    let colors: [Color]
+    let speed: Double
+
+    @State private var rotation1: Double = 0
+    @State private var rotation2: Double = 0
+    @State private var rotation3: Double = 0
+    @State private var rotation4: Double = 0
+    @State private var rotation5: Double = 0
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+
+            ZStack {
+                // Layer 1: Fast rotating angular gradient
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: colors + [colors.first ?? .clear],
+                            center: .center
+                        )
+                    )
+                    .rotationEffect(.degrees(time * 60 * speed))
+                    .blendMode(.screen)
+
+                // Layer 2: Medium speed with 3D rotation
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: (colors.reversed() + [colors.last ?? .clear]),
+                            center: .center
+                        )
+                    )
+                    .rotation3DEffect(
+                        .degrees(time * 40 * speed),
+                        axis: (x: 1, y: 1, z: 0)
+                    )
+                    .blendMode(.plusLighter)
+
+                // Layer 3: Slow counter-rotating gradient
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: colors.shuffled() + [colors.first ?? .clear],
+                            center: .center
+                        )
+                    )
+                    .rotationEffect(.degrees(-time * 30 * speed))
+                    .blendMode(.screen)
+
+                // Layer 4: Very slow with different axis
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: colors + [colors.first ?? .clear],
+                            center: .center,
+                            startAngle: .degrees(45),
+                            endAngle: .degrees(405)
+                        )
+                    )
+                    .rotation3DEffect(
+                        .degrees(time * 20 * speed),
+                        axis: (x: 0, y: 1, z: 1)
+                    )
+                    .blendMode(.hardLight)
+
+                // Layer 5: Radial gradient overlay for glow
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                .white.opacity(0.3),
+                                .clear
+                            ],
+                            center: .center,
+                            startRadius: 10,
+                            endRadius: 40
+                        )
+                    )
+                    .blendMode(.plusLighter)
+            }
+            .clipShape(Circle())
+            .blur(radius: 2)
         }
     }
 }
