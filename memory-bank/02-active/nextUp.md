@@ -1,20 +1,21 @@
 # Next Up
 
-**Last Updated:** 2026-01-09 (late night - post dual-pass implementation)
+**Last Updated:** 2026-01-10 (implementing dual-pass fixes)
 
 ## Immediate (next session)
 
-1. **Test dual-pass refinement in real usage** — P1
-   - Enable "Dual-Pass Refinement (Punctuation)" toggle in menu
-   - Test with various dictation scenarios
-   - Monitor performance and battery impact
-   - Evaluate punctuation quality vs streaming-only mode
+1. **Test dual-pass accuracy fixes** — P0 CRITICAL
+   - ✅ Root cause identified: Audio buffer starts AFTER isSpeaking flag (misses first 100-300ms)
+   - 🔧 Implementing 3 fixes:
+     1. Make audio buffering unconditional (capture all audio from start)
+     2. Move buffer clearing to after refinement completes
+     3. Add diagnostic logging for debugging
+   - ⏳ Pending testing with real dictation
 
-2. **Monitor and tune** — P2
-   - Watch for any stability issues
-   - Consider making EOU debounce configurable
-   - Add visual feedback when refinement is processing
-   - Profile memory usage over extended sessions
+2. **Monitor streaming-only mode** — P1
+   - ✅ Streaming mode confirmed "really strong"
+   - Continue validating stability and accuracy
+   - This is the default and it's working well
 
 ## Monitoring
 

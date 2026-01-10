@@ -22,11 +22,15 @@ System is stable with dual-pass refinement now available as optional toggle. Tes
 - ✅ System tested and passes quality bar for accuracy/speed balance
 
 ### In Progress
-- 🧪 Testing dual-pass refinement in real usage (user is actively testing)
+- 🔧 **Fixing dual-pass accuracy regression** — Root cause identified, implementing fix
+  - **Root cause found:** Audio buffer only captures AFTER isSpeaking flag set (misses first 100-300ms)
+  - Fix 1: Make audio buffering unconditional (capture all audio from start)
+  - Fix 2: Move buffer clearing to after refinement completes (not at utterance start)
+  - Fix 3: Add diagnostic logging for isSpeaking transitions and buffer state
 
 ### Next
-- [ ] Evaluate dual-pass refinement quality and performance
-- [ ] Consider visual feedback for when refinement is processing
+- [ ] Test dual-pass fixes with real dictation
+- [ ] Consider visual feedback when refinement is processing
 - [ ] Add chunk size configurability (user settings: 160ms/320ms)
 - [ ] Clean up excessive logging
 - [ ] Explore larger batch models (1.1B) if CoreML conversion becomes available

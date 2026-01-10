@@ -299,9 +299,9 @@ All core components implemented and building successfully:
 - Consider full context refinement (currently only refines last utterance)
 - Visual feedback for when refinement is processing
 
-### ✅ Phase 4: Optional Toggle Implementation (COMPLETE - 2026-01-09)
+### ⚠️ Phase 4: Optional Toggle Implementation (2026-01-09) - ACCURACY REGRESSION FOUND
 
-**Status:** Dual-pass refinement is now an optional feature controlled by menu bar toggle.
+**Status:** Implemented but currently experiencing accuracy degradation issues.
 
 **Implementation:**
 1. **✅ Menu bar toggle:** "Dual-Pass Refinement (Punctuation)"
@@ -326,14 +326,49 @@ All core components implemented and building successfully:
    - **When enabled:** Wait for refinement, then add spacing/enter
    - Smooth transition between modes
 
-**Benefits:**
+**Commit:** 16ab51c - Reintroduce dual-pass refinement as optional menu toggle
+
+### ❌ Phase 5: Toggle Testing - CRITICAL ISSUES DISCOVERED (2026-01-09)
+
+**Status:** Toggle implementation has significant accuracy problems not present in previous always-on version.
+
+**Issues Found:**
+
+1. **❌ Accuracy Degradation (Critical)**
+   - Dual-pass mode produces WORSE accuracy than pure streaming
+   - Also worse than the previous always-on dual-pass implementation
+   - User reports: "definitely less accurate than streaming"
+   - Contradicts expected behavior (batch model should improve accuracy)
+
+2. **❌ Lost Messages (Critical)**
+   - Complete message loss occurring during dual-pass processing
+   - Data integrity issue - entire utterances disappearing
+
+3. **❌ Cut-off Word Beginnings**
+   - Missing initial parts of words
+   - Likely cause: Audio buffer starts saving AFTER `isSpeaking` flag (when first partial arrives)
+   - Misses ~100-300ms of initial speech
+
+4. **❌ General Flakiness**
+   - Overall less reliable than previous always-on implementation
+   - User: "this particular implementation seems actually flakier than previously"
+
+**The Puzzle:**
+- Code is identical to commit 161624b (which worked well)
+- Previous always-on dual-pass was better than current toggle version
+- Why would toggle version be worse if using same code?
+
+**User Position:**
+- Streaming mode is "really strong"
+- Dual-pass in current state is "pretty weak"
+- User believes it can be fixed: "we can get this to a good state with the toggle. Because it was better previously."
+
+**Intended Benefits (Not Currently Realized):**
 - Users can choose speed vs accuracy/punctuation
 - No breaking changes to existing workflow
 - Opt-in for power users who want punctuation
 - Fast default for coding/casual use
 - Clean architecture with minimal conditional logic
-
-**Commit:** 16ab51c - Reintroduce dual-pass refinement as optional menu toggle
 
 ### Remaining Tasks (Optional Enhancements)
 
