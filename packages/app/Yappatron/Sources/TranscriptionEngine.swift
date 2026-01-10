@@ -273,10 +273,7 @@ class TranscriptionEngine: ObservableObject {
 
         // Track speaking state
         if !isSpeaking {
-            // Clear audio chunk buffer at start of new utterance
-            Task {
-                await audioChunkBuffer?.clear()
-            }
+            log("isSpeaking: false → true (speech started)")
 
             DispatchQueue.main.async { [weak self] in
                 self?.isSpeaking = true
@@ -307,6 +304,8 @@ class TranscriptionEngine: ObservableObject {
             if !audioSamples.isEmpty {
                 let duration = Float(audioSamples.count) / 16000.0
                 log("Captured \(bufferCount) audio chunks (\(String(format: "%.1f", duration))s) for utterance")
+            } else {
+                log("Warning: No audio samples captured for utterance")
             }
 
             DispatchQueue.main.async { [weak self] in
@@ -316,11 +315,20 @@ class TranscriptionEngine: ObservableObject {
                     // Provide audio samples and streamed text for refinement (if callback is set)
                     if !audioSamples.isEmpty {
                         self?.onUtteranceComplete?(audioSamples, trimmed)
+                    } else {
+                        log("Skipping refinement callback - no audio samples available")
                     }
                 }
+
+                log("isSpeaking: true → false (speech ended)")
                 self?.isSpeaking = false
                 self?.onSpeechEnd?()
             }
+
+            // Clear audio chunk buffer AFTER refinement callback
+            // This ensures the callback has access to the complete audio
+            await audioChunkBuffer?.clear()
+            log("Audio chunk buffer cleared")
 
             // Reset the streaming manager for next utterance
             await streamingManager?.reset()
@@ -447,10 +455,10 @@ class TranscriptionEngine: ObservableObject {
                     do {
                         _ = try await self.streamingManager?.process(audioBuffer: buffer)
 
-                        // Save audio chunk if currently speaking (for batch refinement)
-                        if self.isSpeaking {
-                            await self.audioChunkBuffer?.append(buffer)
-                        }
+                        // FIX: Always save audio chunks for batch refinement (unconditional)
+                        // This ensures we capture the complete utterance from the beginning,
+                        // not just after isSpeaking flag is set (which happens after first partial arrives)
+                        await self.audioChunkBuffer?.append(buffer)
                     } catch {
                         log("Streaming process error: \(error.localizedDescription)")
                     }

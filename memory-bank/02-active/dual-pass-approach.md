@@ -328,47 +328,67 @@ All core components implemented and building successfully:
 
 **Commit:** 16ab51c - Reintroduce dual-pass refinement as optional menu toggle
 
-### ❌ Phase 5: Toggle Testing - CRITICAL ISSUES DISCOVERED (2026-01-09)
+### ✅ Phase 5: Root Cause Analysis & Fixes (2026-01-10)
 
-**Status:** Toggle implementation has significant accuracy problems not present in previous always-on version.
+**Status:** Root cause identified and fixes implemented, pending testing.
 
-**Issues Found:**
+**Root Cause Identified:**
 
-1. **❌ Accuracy Degradation (Critical)**
-   - Dual-pass mode produces WORSE accuracy than pure streaming
-   - Also worse than the previous always-on dual-pass implementation
-   - User reports: "definitely less accurate than streaming"
-   - Contradicts expected behavior (batch model should improve accuracy)
+The toggle version had a critical timing bug not present in commit 161624b:
 
-2. **❌ Lost Messages (Critical)**
-   - Complete message loss occurring during dual-pass processing
-   - Data integrity issue - entire utterances disappearing
+**The Bug (Line 451-453 in TranscriptionEngine.swift):**
+```swift
+if self.isSpeaking {
+    await self.audioChunkBuffer?.append(buffer)  // Only saves AFTER speaking detected!
+}
+```
 
-3. **❌ Cut-off Word Beginnings**
-   - Missing initial parts of words
-   - Likely cause: Audio buffer starts saving AFTER `isSpeaking` flag (when first partial arrives)
-   - Misses ~100-300ms of initial speech
+**The Problem:**
+- Audio buffering only started AFTER `isSpeaking` flag was set
+- `isSpeaking` is set in `handlePartialTranscription()` when first partial arrives
+- By that time, ~100-300ms of initial audio has already been processed and lost
+- Batch model receives incomplete audio → worse accuracy, cut-off beginnings, message loss
 
-4. **❌ General Flakiness**
-   - Overall less reliable than previous always-on implementation
-   - User: "this particular implementation seems actually flakier than previously"
+**Why Previous Always-On Version Worked:**
+- Commit 161624b saved audio unconditionally from the start
+- No dependency on `isSpeaking` flag timing
+- Captured complete utterances
 
-**The Puzzle:**
-- Code is identical to commit 161624b (which worked well)
-- Previous always-on dual-pass was better than current toggle version
-- Why would toggle version be worse if using same code?
+**Secondary Issues:**
+1. Buffer clearing timing: Cleared at utterance START (async Task) instead of after refinement completes
+2. Missing diagnostic logging: Hard to debug timing issues without state transition logs
 
-**User Position:**
-- Streaming mode is "really strong"
-- Dual-pass in current state is "pretty weak"
-- User believes it can be fixed: "we can get this to a good state with the toggle. Because it was better previously."
+**Fixes Implemented (2026-01-10):**
 
-**Intended Benefits (Not Currently Realized):**
-- Users can choose speed vs accuracy/punctuation
-- No breaking changes to existing workflow
-- Opt-in for power users who want punctuation
-- Fast default for coding/casual use
-- Clean architecture with minimal conditional logic
+1. **✅ Fix 1: Unconditional Audio Buffering**
+   - Changed Line 461 to always save audio chunks (no `if self.isSpeaking` condition)
+   - Now captures complete utterances from the very beginning
+   - Matches behavior of working commit 161624b
+   - File: [TranscriptionEngine.swift:458-461](../../packages/app/Yappatron/Sources/TranscriptionEngine.swift#L458-L461)
+
+2. **✅ Fix 2: Buffer Clearing Timing**
+   - Moved buffer clear from `handlePartialTranscription()` to `handleFinalTranscription()`
+   - Now clears AFTER refinement callback completes (Line 330)
+   - Ensures callback has access to complete audio
+   - Eliminates async timing race condition
+   - File: [TranscriptionEngine.swift:328-331](../../packages/app/Yappatron/Sources/TranscriptionEngine.swift#L328-L331)
+
+3. **✅ Fix 3: Diagnostic Logging**
+   - Added logging for `isSpeaking` state transitions (Lines 276, 323)
+   - Added warning when no audio samples captured (Line 308)
+   - Added logging when refinement callback is skipped (Line 319)
+   - Added logging when buffer is cleared (Line 331)
+   - File: [TranscriptionEngine.swift](../../packages/app/Yappatron/Sources/TranscriptionEngine.swift)
+
+**Expected Outcomes:**
+- ✅ No more cut-off word beginnings (captures complete audio)
+- ✅ Better accuracy (batch model has complete context)
+- ✅ No message loss (complete utterances preserved)
+- ✅ More reliable (no timing-dependent buffer clearing)
+- ✅ Better debuggability (state transition logging)
+
+**Testing Status:**
+- ⏳ Pending real-world dictation testing to verify fixes
 
 ### Remaining Tasks (Optional Enhancements)
 

@@ -22,11 +22,12 @@ System is stable with dual-pass refinement now available as optional toggle. Tes
 - ✅ System tested and passes quality bar for accuracy/speed balance
 
 ### In Progress
-- 🔧 **Fixing dual-pass accuracy regression** — Root cause identified, implementing fix
-  - **Root cause found:** Audio buffer only captures AFTER isSpeaking flag set (misses first 100-300ms)
-  - Fix 1: Make audio buffering unconditional (capture all audio from start)
-  - Fix 2: Move buffer clearing to after refinement completes (not at utterance start)
-  - Fix 3: Add diagnostic logging for isSpeaking transitions and buffer state
+- 🧪 **Testing dual-pass accuracy fixes** — Fixes implemented, ready for testing
+  - ✅ **Root cause found:** Audio buffer only captures AFTER isSpeaking flag set (misses first 100-300ms)
+  - ✅ Fix 1: Made audio buffering unconditional (captures all audio from start)
+  - ✅ Fix 2: Moved buffer clearing to after refinement completes (not at utterance start)
+  - ✅ Fix 3: Added diagnostic logging for isSpeaking transitions and buffer state
+  - ⏳ Pending: Real-world dictation testing to verify fixes work
 
 ### Next
 - [ ] Test dual-pass fixes with real dictation
