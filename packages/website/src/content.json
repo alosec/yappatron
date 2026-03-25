@@ -4,25 +4,25 @@
   "description": "always-on voice dictation for mac. no hotkeys. no toggles. just talk.",
   "badges": [
     { "label": "macOS", "icon": "apple" },
-    { "label": "local", "icon": "shield" },
+    { "label": "cloud + local", "icon": "shield" },
     { "label": "free", "icon": "heart" }
   ],
   "features": [
     {
       "title": "streaming text",
-      "body": "Characters appear as you speak, just like typing. Watch your words flow in real-time."
+      "body": "Text flows in as you speak. Deepgram Nova-3 for cloud accuracy, or fully local with Parakeet."
     },
     {
       "title": "built for vibe coding",
       "body": "Talk to your AI. Describe what you want. Auto-enters when you pause so Claude responds instantly."
     },
     {
-      "title": "faster than apple",
-      "body": "320ms latency beats native dictation. More accurate too. Local Parakeet model on Neural Engine."
+      "title": "best-in-class accuracy",
+      "body": "Deepgram Nova-3 with punctuation, capitalization, and smart formatting. Sub-300ms latency."
     },
     {
-      "title": "fully local",
-      "body": "All processing on-device. No cloud, no API calls. Your words never leave your machine."
+      "title": "local or cloud — your call",
+      "body": "Switch between Deepgram cloud STT and fully local Parakeet from the menu bar. Your words, your rules."
     }
   ],
   "steps": [
