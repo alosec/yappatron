@@ -42,7 +42,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
             URLQueryItem(name: "channels", value: "1"),
-            URLQueryItem(name: "endpointing", value: "1500"),
+            URLQueryItem(name: "endpointing", value: "1800"),
             URLQueryItem(name: "smart_format", value: "true"),
         ]
 

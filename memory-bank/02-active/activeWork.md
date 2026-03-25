@@ -4,48 +4,42 @@
 
 ## Current State
 
-Deepgram Nova-3 cloud STT backend added and working excellently. System has pluggable STT backends (cloud + local).
+Deepgram Nova-3 cloud STT is live and working well. Text streams in as clean sentence-level chunks during speech (is_final segments only — no backspacing). Orb animates from interims. Current UX is strong but we want to improve to real-time character-level streaming in a future session.
 
 ### Key UX Features
-- **☁️ Deepgram Nova-3 cloud STT**: Sub-300ms latency, punctuation, smart formatting — user's preferred backend
+- **☁️ Deepgram Nova-3 cloud STT**: Punctuation, smart formatting, sentence-level streaming
 - **🏠 Local Parakeet STT**: Fully offline fallback option
 - **🔀 Swappable backends**: Switch via menu bar → STT Backend submenu
-- **Psychedelic orb visualization**: Voronoi Cells animation during speech
+- **Forward-only typing**: Only is_final segments get typed — zero backspacing
+- **Orb animation**: Fires on interims for immediate speech feedback
+- **EOU tuning**: Deepgram endpointing 1500ms, local fallback timer 2500ms, speech_final disabled
 - **Auto-send with Enter**: Optional hands-free mode for Claude Code etc.
-- **Dual-pass refinement**: Optional punctuation for local mode (auto-skipped for cloud)
 
 ### What's Done
-- ✅ **Cloud STT (Deepgram Nova-3)** — WebSocket streaming, punctuation, smart formatting (2026-03-24)
-- ✅ **Pluggable STTProvider protocol** — Swappable backends without touching audio pipeline
-- ✅ **API key management** — Secure storage in app preferences, menu bar UI for key entry
-- ✅ Swift rewrite with FluidAudio streaming
-- ✅ 320ms chunk size for improved accuracy
-- ✅ Ghost text with diff-based corrections
-- ✅ Orb animations: Voronoi Cells (default) + Concentric Rings with RGB palette
-- ✅ Dual-pass refinement: Optional toggle for punctuation/capitalization
-- ✅ `scripts/run-dev.sh` for ad-hoc signing
-- ✅ Permission handling documented
+- ✅ **Cloud STT (Deepgram Nova-3)** — WebSocket streaming, punctuation, smart formatting
+- ✅ **Forward-only chunk streaming** — is_final segments typed as they arrive, no backspacing
+- ✅ **Decoupled orb from typing** — interims trigger orb, only finals trigger typing
+- ✅ **EOU timing tuned** — speech_final disabled, endpointing 1500ms, local timer 2500ms
+- ✅ **Pluggable STTProvider protocol** — Swappable backends
+- ✅ **API key management** — UserDefaults storage, menu bar UI
+- ✅ Orb animations: Voronoi Cells (default) + Concentric Rings
+- ✅ Dual-pass refinement: Optional toggle for local mode
 
-### Landing Page (2026-01-10 major facelift)
-- ✅ RGB multicolor breathing orb (red/green/blue gradient)
-- ✅ Light/dark mode toggle
-- ✅ Video demo player with play/pause
+### Landing Page (2026-01-10)
 - ✅ Deployed to yappatron.pages.dev
 
-## Future Ideas (not urgent)
+## Next Priority
 
-### iPhone App
-Strong motivation here. Local models mean no subscription fees. Whisper Flow charges $15/month for something we built in hours with better UX.
-
-### Live On-the-Fly Editing
-Instead of backspacing whole utterance, make edits as text streams in.
+### Real-time character-level streaming (future session)
+Currently text appears in sentence-level chunks from is_final segments. The goal is character-by-character streaming while speaking. Backspacing approach was tried extensively and doesn't work well with Deepgram's interim revisions. Future ideas:
+- Trust interim words that match previous interim (stable prefix)
+- Check if Deepgram has a "high confidence" signal per word
+- Hybrid: type stable prefix of interims, correct on is_final
 
 ### Other Backlog
 - [ ] Hot-swap backends without requiring restart
 - [ ] Additional cloud providers (Soniox at $0.12/hr)
-- [ ] **Listening toggle** (yap-c2dd)
-- [ ] Custom vocabulary (Swift port)
-- [ ] Visual feedback when refinement is processing
+- [ ] iPhone app
 - [ ] App notarization
 
 ## Quick Commands
