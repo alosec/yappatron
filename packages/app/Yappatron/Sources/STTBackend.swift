@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// Available speech-to-text backends
 enum STTBackend: String, CaseIterable {
@@ -29,59 +28,20 @@ enum STTBackend: String, CaseIterable {
     }
 }
 
-// MARK: - Keychain API Key Storage
+// MARK: - API Key Storage (UserDefaults)
 
 enum APIKeyStore {
-    private static let service = "com.yappatron.api-keys"
+    private static let prefix = "apiKey_"
 
     static func save(key: String, for backend: STTBackend) {
-        let account = backend.rawValue
-        let data = key.data(using: .utf8)!
-
-        // Delete existing
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
-        // Add new
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data
-        ]
-        SecItemAdd(addQuery as CFDictionary, nil)
+        UserDefaults.standard.set(key, forKey: prefix + backend.rawValue)
     }
 
     static func get(for backend: STTBackend) -> String? {
-        let account = backend.rawValue
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess, let data = result as? Data else {
-            return nil
-        }
-        return String(data: data, encoding: .utf8)
+        UserDefaults.standard.string(forKey: prefix + backend.rawValue)
     }
 
     static func delete(for backend: STTBackend) {
-        let account = backend.rawValue
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
+        UserDefaults.standard.removeObject(forKey: prefix + backend.rawValue)
     }
 }

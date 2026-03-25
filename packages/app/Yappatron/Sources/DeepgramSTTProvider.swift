@@ -3,16 +3,16 @@ import AVFoundation
 
 /// Deepgram real-time streaming STT provider via WebSocket
 /// Uses Nova-3 model with punctuation, sub-300ms latency
-class DeepgramSTTProvider: STTProvider {
+class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     private var webSocketTask: URLSessionWebSocketTask?
     private var session: URLSession?
+    private var sessionDelegate: WebSocketDelegate?
     private let apiKey: String
     private var isConnected = false
     private var receiveTask: Task<Void, Never>?
     private var keepAliveTask: Task<Void, Never>?
 
-    // EOU detection: Deepgram sends is_final=true on speech_final events
-    // We also track silence for manual EOU fallback
+    // EOU detection
     private var currentUtterance = ""
     private var eouTimer: Task<Void, Never>?
     private let eouDebounceMs: UInt64 = 800
@@ -30,14 +30,12 @@ class DeepgramSTTProvider: STTProvider {
                          userInfo: [NSLocalizedDescriptionKey: "Deepgram API key not set"])
         }
 
-        // Build WebSocket URL with query params
+        // Build WebSocket URL with all params including auth
         var components = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
         components.queryItems = [
             URLQueryItem(name: "model", value: "nova-3"),
             URLQueryItem(name: "punctuate", value: "true"),
             URLQueryItem(name: "interim_results", value: "true"),
-            URLQueryItem(name: "utterance_end_ms", value: "800"),
-            URLQueryItem(name: "vad_events", value: "true"),
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
             URLQueryItem(name: "channels", value: "1"),
@@ -50,15 +48,31 @@ class DeepgramSTTProvider: STTProvider {
                          userInfo: [NSLocalizedDescriptionKey: "Invalid Deepgram URL"])
         }
 
+        // Use URLRequest with Authorization header
         var request = URLRequest(url: url)
         request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        session = URLSession(configuration: .default)
+        // Create delegate to track WebSocket lifecycle
+        sessionDelegate = WebSocketDelegate()
+        session = URLSession(
+            configuration: .default,
+            delegate: sessionDelegate,
+            delegateQueue: nil
+        )
+
         webSocketTask = session?.webSocketTask(with: request)
         webSocketTask?.resume()
 
+        // Wait for the delegate to confirm WebSocket opened
+        let opened = await sessionDelegate!.waitForOpen(timeout: 10.0)
+        if !opened {
+            let errorMsg = sessionDelegate?.lastError ?? "Connection timed out"
+            throw NSError(domain: "DeepgramSTTProvider", code: 3,
+                         userInfo: [NSLocalizedDescriptionKey: "Failed to connect to Deepgram: \(errorMsg)"])
+        }
+
         isConnected = true
-        log("DeepgramSTTProvider: WebSocket connected")
+        log("DeepgramSTTProvider: WebSocket opened successfully")
 
         // Start receiving messages
         startReceiving()
@@ -94,7 +108,6 @@ class DeepgramSTTProvider: STTProvider {
         let closeMessage = "{\"type\": \"CloseStream\"}"
         try await ws.send(.string(closeMessage))
 
-        // Return any pending utterance
         let pending = currentUtterance
         currentUtterance = ""
         return pending.isEmpty ? nil : pending
@@ -115,6 +128,7 @@ class DeepgramSTTProvider: STTProvider {
         webSocketTask = nil
         session?.invalidateAndCancel()
         session = nil
+        sessionDelegate = nil
         log("DeepgramSTTProvider: Cleaned up")
     }
 
@@ -165,6 +179,7 @@ class DeepgramSTTProvider: STTProvider {
     private func handleMessage(_ text: String) {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            log("DeepgramSTTProvider: Unparseable message: \(text.prefix(200))")
             return
         }
 
@@ -178,13 +193,12 @@ class DeepgramSTTProvider: STTProvider {
         case "Metadata":
             log("DeepgramSTTProvider: Connected, request_id=\(json["request_id"] ?? "?")")
         case "SpeechStarted":
-            // VAD detected speech start
             break
         case "Error":
             let message = json["message"] as? String ?? "Unknown error"
-            log("DeepgramSTTProvider: Error: \(message)")
+            log("DeepgramSTTProvider: Server error: \(message)")
         default:
-            break
+            log("DeepgramSTTProvider: Unknown message type: \(type)")
         }
     }
 
@@ -202,14 +216,12 @@ class DeepgramSTTProvider: STTProvider {
         guard !transcript.isEmpty else { return }
 
         if isFinal {
-            // Accumulate final segments within an utterance
             if !currentUtterance.isEmpty {
                 currentUtterance += " "
             }
             currentUtterance += transcript
 
             if speechFinal {
-                // End of utterance — Deepgram detected a natural pause
                 let utterance = currentUtterance
                 currentUtterance = ""
                 eouTimer?.cancel()
@@ -219,31 +231,24 @@ class DeepgramSTTProvider: STTProvider {
                     self?.onFinal?(utterance)
                 }
             } else {
-                // Final segment but speech continues — send as partial
                 log("DeepgramSTTProvider: Final segment: '\(currentUtterance)'")
                 let partial = currentUtterance
                 DispatchQueue.main.async { [weak self] in
                     self?.onPartial?(partial)
                 }
-
-                // Start EOU timer in case no more speech comes
                 scheduleEOUTimer()
             }
         } else {
-            // Interim result — show as partial
             let partialText = currentUtterance.isEmpty ? transcript : "\(currentUtterance) \(transcript)"
             log("DeepgramSTTProvider: Partial: '\(partialText)'")
             DispatchQueue.main.async { [weak self] in
                 self?.onPartial?(partialText)
             }
-
-            // Reset EOU timer on new audio
             scheduleEOUTimer()
         }
     }
 
     private func handleUtteranceEnd() {
-        // Deepgram's UtteranceEnd event — definitively marks end of speech
         guard !currentUtterance.isEmpty else { return }
 
         let utterance = currentUtterance
@@ -259,7 +264,7 @@ class DeepgramSTTProvider: STTProvider {
     private func scheduleEOUTimer() {
         eouTimer?.cancel()
         eouTimer = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: self?.eouDebounceMs ?? 800 * 1_000_000)
+            try? await Task.sleep(nanoseconds: (self?.eouDebounceMs ?? 800) * 1_000_000)
             guard !Task.isCancelled else { return }
             guard let self = self, !self.currentUtterance.isEmpty else { return }
 
@@ -270,6 +275,66 @@ class DeepgramSTTProvider: STTProvider {
             DispatchQueue.main.async { [weak self] in
                 self?.onFinal?(utterance)
             }
+        }
+    }
+}
+
+// MARK: - WebSocket Delegate
+
+private class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate {
+    private var openContinuation: CheckedContinuation<Bool, Never>?
+    var lastError: String?
+
+    func waitForOpen(timeout: TimeInterval) async -> Bool {
+        return await withCheckedContinuation { continuation in
+            self.openContinuation = continuation
+
+            // Timeout fallback
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
+                if let cont = self?.openContinuation {
+                    self?.openContinuation = nil
+                    self?.lastError = "Connection timed out after \(timeout)s"
+                    cont.resume(returning: false)
+                }
+            }
+        }
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        log("DeepgramSTTProvider: WebSocket didOpen")
+        openContinuation?.resume(returning: true)
+        openContinuation = nil
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        let reasonStr = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "none"
+        log("DeepgramSTTProvider: WebSocket didClose code=\(closeCode.rawValue) reason=\(reasonStr)")
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            log("DeepgramSTTProvider: Task error: \(error.localizedDescription)")
+
+            if let httpResponse = task.response as? HTTPURLResponse {
+                lastError = "HTTP \(httpResponse.statusCode)"
+                log("DeepgramSTTProvider: HTTP status: \(httpResponse.statusCode)")
+                // Log dg-error header for Deepgram-specific error info
+                if let dgError = httpResponse.allHeaderFields["dg-error"] as? String {
+                    log("DeepgramSTTProvider: dg-error: \(dgError)")
+                    lastError = "HTTP \(httpResponse.statusCode): \(dgError)"
+                }
+            } else {
+                lastError = error.localizedDescription
+            }
+
+            // Try to read the response body from the error userInfo
+            let nsError = error as NSError
+            if let data = nsError.userInfo["NSErrorFailingURLStringKey"] {
+                log("DeepgramSTTProvider: Failing URL: \(data)")
+            }
+
+            openContinuation?.resume(returning: false)
+            openContinuation = nil
         }
     }
 }
