@@ -21,4 +21,6 @@ protocol STTProvider: AnyObject {
     /// Callbacks
     var onPartial: ((String) -> Void)? { get set }
     var onFinal: ((String) -> Void)? { get set }
+    /// Called when locked (is_final) text advances — parameter is the locked text length
+    var onLockedTextAdvanced: ((Int) -> Void)? { get set }
 }

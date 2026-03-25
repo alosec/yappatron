@@ -123,6 +123,7 @@ class TranscriptionEngine: ObservableObject {
     // Callbacks - called on main thread
     var onTranscription: ((String) -> Void)?           // Final text (on EOU)
     var onPartialTranscription: ((String) -> Void)?    // Ghost text (updates as you speak)
+    var onLockedTextAdvanced: ((Int) -> Void)?         // Locked text length advanced (cloud backends)
     var onSpeechStart: (() -> Void)?
     var onSpeechEnd: (() -> Void)?
     var onUtteranceComplete: (([Float], String) -> Void)?  // Audio samples + streamed text for refinement
@@ -197,6 +198,11 @@ class TranscriptionEngine: ObservableObject {
             }
             provider.onFinal = { [weak self] final in
                 self?.handleFinalTranscription(final)
+            }
+            provider.onLockedTextAdvanced = { [weak self] lockedLen in
+                DispatchQueue.main.async {
+                    self?.onLockedTextAdvanced?(lockedLen)
+                }
             }
 
             log("Starting STT provider...")

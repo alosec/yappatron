@@ -13,12 +13,15 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     private var keepAliveTask: Task<Void, Never>?
 
     // EOU detection
-    private var currentUtterance = ""
+    private var currentUtterance = ""      // Accumulated is_final text
+    private var lastInterimText = ""       // Last interim shown (for safe replacement)
+    private var lastEmittedPartial = ""    // Last text sent to onPartial (for append-only check)
     private var eouTimer: Task<Void, Never>?
-    private let eouDebounceMs: UInt64 = 800
+    private let eouDebounceMs: UInt64 = 2500
 
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
+    var onLockedTextAdvanced: ((Int) -> Void)?
 
     init(apiKey: String) {
         self.apiKey = apiKey
@@ -39,7 +42,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
             URLQueryItem(name: "channels", value: "1"),
-            URLQueryItem(name: "endpointing", value: "800"),
+            URLQueryItem(name: "endpointing", value: "2200"),
             URLQueryItem(name: "smart_format", value: "true"),
         ]
 
@@ -115,6 +118,8 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
 
     func reset() async {
         currentUtterance = ""
+        lastInterimText = ""
+        lastEmittedPartial = ""
         eouTimer?.cancel()
         eouTimer = nil
     }
@@ -216,12 +221,15 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         guard !transcript.isEmpty else { return }
 
         if isFinal {
+            // Clear any interim text first, then show the locked final
+            lastInterimText = ""
+
             if !currentUtterance.isEmpty {
                 currentUtterance += " "
             }
             currentUtterance += transcript
 
-            if speechFinal {
+            if false /* speechFinal disabled — let silence timeout handle EOU */ {
                 let utterance = currentUtterance
                 currentUtterance = ""
                 eouTimer?.cancel()
@@ -231,9 +239,8 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
                     self?.onFinal?(utterance)
                 }
             } else {
-                // Emit is_final segments as partials — these only append, never revise,
-                // so the diff algorithm won't backspace. Clean forward-only text growth.
-                log("DeepgramSTTProvider: Final segment: '\(currentUtterance)'")
+                log("DeepgramSTTProvider: Final segment (buffered): '\(currentUtterance)'")
+                // Emit as partial for speech detection (orb) but app won't type it
                 let partial = currentUtterance
                 DispatchQueue.main.async { [weak self] in
                     self?.onPartial?(partial)
@@ -241,9 +248,11 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
                 scheduleEOUTimer()
             }
         } else {
-            // Skip interim results entirely — they cause aggressive backspacing
-            // because Deepgram frequently revises them. is_final segments arrive
-            // fast enough (~300ms) that skipping interims feels instant.
+            // Emit interim for speech detection (orb) but app won't type it
+            let fullText = currentUtterance.isEmpty ? transcript : "\(currentUtterance) \(transcript)"
+            DispatchQueue.main.async { [weak self] in
+                self?.onPartial?(fullText)
+            }
             scheduleEOUTimer()
         }
     }

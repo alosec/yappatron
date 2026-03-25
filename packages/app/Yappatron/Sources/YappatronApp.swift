@@ -36,6 +36,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // State
     @Published var isPaused = false
     @Published var currentTypedText = "" // What we've typed so far (for backspace corrections)
+    var lockedTextLength = 0             // Characters confirmed by is_final (never backspace into these)
 
     // Settings
     var pressEnterAfterSpeech: Bool {
@@ -137,6 +138,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
 
+        // Locked text advanced (cloud backends — update protected boundary)
+        engine.onLockedTextAdvanced = { [weak self] lockedLen in
+            Task { @MainActor in
+                self?.lockedTextLength = lockedLen
+            }
+        }
+
         // Utterance complete callback - triggers batch refinement (if enabled, local backend only)
         if enableDualPassRefinement && !STTBackend.current.returnsPunctuatedText {
             engine.onUtteranceComplete = { [weak self] audioSamples, streamedText in
@@ -184,16 +192,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     /// Handle partial transcription updates (streaming text)
-    /// Types text immediately (no refinement during streaming)
+    /// For cloud backends: only allows backspacing into interim (tentative) text, never into locked finals
     func handlePartialTranscription(_ partial: String) {
         guard !isPaused else { return }
 
-        // Check if input is focused
         guard InputSimulator.isTextInputFocused() else {
             return
         }
 
-        // Type streaming text immediately
+        if STTBackend.current.returnsPunctuatedText {
+            // Cloud backend: don't type during speech.
+            // All typing happens in handleFinalTranscription (clean, all at once).
+            // Partials still flow through for orb/speech detection.
+            return
+        }
+
+        // Local backend: original behavior
         inputSimulator.applyTextUpdate(from: currentTypedText, to: partial)
         currentTypedText = partial
     }
@@ -209,11 +223,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        // Ensure final text is correct (in case partials diverged)
+        // Correct any interim drift — finals are authoritative
         if currentTypedText != text {
             inputSimulator.applyTextUpdate(from: currentTypedText, to: text)
             currentTypedText = text
         }
+
+        // Reset locked boundary
+        lockedTextLength = 0
 
         // Cloud backends return punctuated text — no dual-pass needed
         // If dual-pass refinement is DISABLED, add spacing/enter immediately
