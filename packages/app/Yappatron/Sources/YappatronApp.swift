@@ -5,7 +5,7 @@ import Combine
 @main
 struct YappatronApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
+
     var body: some Scene {
         Settings {
             SettingsView()
@@ -17,12 +17,12 @@ struct YappatronApp: App {
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
-    
+
     // UI
     var statusItem: NSStatusItem!
     var overlayWindow: OverlayWindow?
     var overlayController: OverlayWindowController?
-    
+
     // Core
     var engine: TranscriptionEngine!
     var inputSimulator: InputSimulator!
@@ -32,11 +32,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // Hotkeys
     var togglePauseHotKey: HotKey?
     var toggleOverlayHotKey: HotKey?
-    
+
     // State
     @Published var isPaused = false
     @Published var currentTypedText = "" // What we've typed so far (for backspace corrections)
-    
+
     // Settings
     var pressEnterAfterSpeech: Bool {
         get { UserDefaults.standard.bool(forKey: "pressEnterAfterSpeech") }
@@ -47,24 +47,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         get { UserDefaults.standard.bool(forKey: "enableDualPassRefinement") }
         set { UserDefaults.standard.set(newValue, forKey: "enableDualPassRefinement") }
     }
-    
+
     // Combine
     private var cancellables = Set<AnyCancellable>()
-    
+
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         Task { @MainActor in
             await self.setup()
         }
     }
-    
+
     func setup() async {
         NSApp.setActivationPolicy(.accessory)
 
         inputSimulator = InputSimulator()
-        engine = TranscriptionEngine()
+
+        let backend = STTBackend.current
+        engine = TranscriptionEngine(backend: backend)
 
         // Initialize batch processor and refinement manager if dual-pass is enabled
-        if enableDualPassRefinement {
+        // Only for local backend (cloud backends already return punctuated text)
+        if enableDualPassRefinement && !backend.returnsPunctuatedText {
             batchProcessor = BatchProcessor()
             if let batchProcessor = batchProcessor {
                 refinementManager = TextRefinementManager(
@@ -110,15 +113,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             engine.startListening()
         }
     }
-    
+
     nonisolated func applicationWillTerminate(_ notification: Notification) {
         Task { @MainActor in
             engine.cleanup()
         }
     }
-    
+
     // MARK: - Engine Setup
-    
+
     func setupEngineCallbacks() {
         // Final transcription (on EOU) - reset for next utterance
         engine.onTranscription = { [weak self] text in
@@ -134,8 +137,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
 
-        // Utterance complete callback - triggers batch refinement (if enabled)
-        if enableDualPassRefinement {
+        // Utterance complete callback - triggers batch refinement (if enabled, local backend only)
+        if enableDualPassRefinement && !STTBackend.current.returnsPunctuatedText {
             engine.onUtteranceComplete = { [weak self] audioSamples, streamedText in
                 Task { @MainActor in
                     self?.refinementManager?.refineTranscription(
@@ -169,7 +172,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
     }
-    
+
     func observeEngineStatus() {
         engine.$status
             .receive(on: DispatchQueue.main)
@@ -179,7 +182,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
             .store(in: &cancellables)
     }
-    
+
     /// Handle partial transcription updates (streaming text)
     /// Types text immediately (no refinement during streaming)
     func handlePartialTranscription(_ partial: String) {
@@ -196,7 +199,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     /// Handle final transcription (EOU detected)
-    /// Behavior depends on dual-pass refinement setting
+    /// Behavior depends on dual-pass refinement setting and backend
     func handleFinalTranscription(_ text: String) {
         guard !isPaused else { return }
 
@@ -212,9 +215,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             currentTypedText = text
         }
 
+        // Cloud backends return punctuated text — no dual-pass needed
         // If dual-pass refinement is DISABLED, add spacing/enter immediately
-        // If ENABLED, wait for refinement to complete before adding spacing/enter
-        if !enableDualPassRefinement {
+        // If ENABLED (local only), wait for refinement to complete
+        let needsRefinement = enableDualPassRefinement && !STTBackend.current.returnsPunctuatedText
+        if !needsRefinement {
             // Add trailing space
             inputSimulator.typeString(" ")
 
@@ -245,7 +250,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Reset for next utterance
         currentTypedText = ""
     }
-    
+
     func updateOverlayStatus() {
         switch engine.status {
         case .initializing:
@@ -260,12 +265,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             overlayWindow?.overlayViewModel.status = .error(msg)
         }
     }
-    
+
     // MARK: - Status Bar
-    
+
     func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        
+
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Yappatron")
             button.action = #selector(statusItemClicked)
@@ -273,20 +278,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             button.target = self
         }
     }
-    
+
     @objc func statusItemClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent!
-        
+
         if event.type == .rightMouseUp {
             showMenu()
         } else {
             toggleOverlay()
         }
     }
-    
+
     func showMenu() {
         let menu = NSMenu()
-        
+
         // Status
         let statusText: String
         switch engine.status {
@@ -295,28 +300,62 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         case .ready, .listening: statusText = isPaused ? "⏸ Paused" : "🎙 Listening"
         case .error(let msg): statusText = "❌ \(msg)"
         }
-        
+
         let statusMenuItem = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
-        
+
+        // Show current backend
+        let backendLabel = NSMenuItem(title: "Backend: \(STTBackend.current.rawValue)", action: nil, keyEquivalent: "")
+        backendLabel.isEnabled = false
+        menu.addItem(backendLabel)
+
         menu.addItem(NSMenuItem.separator())
-        
+
         if isPaused {
             menu.addItem(NSMenuItem(title: "Resume", action: #selector(resumeAction), keyEquivalent: ""))
         } else {
             menu.addItem(NSMenuItem(title: "Pause", action: #selector(pauseAction), keyEquivalent: ""))
         }
-        
+
         menu.addItem(NSMenuItem.separator())
 
         let enterItem = NSMenuItem(title: "Press Enter After Speech", action: #selector(toggleEnterAction), keyEquivalent: "")
         enterItem.state = pressEnterAfterSpeech ? .on : .off
         menu.addItem(enterItem)
 
-        let refinementItem = NSMenuItem(title: "Dual-Pass Refinement (Punctuation)", action: #selector(toggleRefinementAction), keyEquivalent: "")
-        refinementItem.state = enableDualPassRefinement ? .on : .off
-        menu.addItem(refinementItem)
+        // Only show dual-pass option for local backend
+        if !STTBackend.current.returnsPunctuatedText {
+            let refinementItem = NSMenuItem(title: "Dual-Pass Refinement (Punctuation)", action: #selector(toggleRefinementAction), keyEquivalent: "")
+            refinementItem.state = enableDualPassRefinement ? .on : .off
+            menu.addItem(refinementItem)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
+        // STT Backend submenu
+        let backendItem = NSMenuItem(title: "STT Backend", action: nil, keyEquivalent: "")
+        let backendMenu = NSMenu()
+
+        for backend in STTBackend.allCases {
+            let item = NSMenuItem(title: backend.rawValue, action: #selector(selectBackend(_:)), keyEquivalent: "")
+            item.representedObject = backend.rawValue
+            item.state = (backend == STTBackend.current) ? .on : .off
+            backendMenu.addItem(item)
+        }
+
+        backendMenu.addItem(NSMenuItem.separator())
+
+        // API Key management
+        let apiKeyItem = NSMenuItem(title: "Set Deepgram API Key...", action: #selector(setDeepgramAPIKey), keyEquivalent: "")
+        let hasKey = APIKeyStore.get(for: .deepgram) != nil
+        if hasKey {
+            apiKeyItem.title = "Update Deepgram API Key..."
+        }
+        backendMenu.addItem(apiKeyItem)
+
+        backendItem.submenu = backendMenu
+        menu.addItem(backendItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -343,25 +382,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         } else {
             menu.addItem(NSMenuItem(title: "Show Indicator", action: #selector(showOverlayAction), keyEquivalent: ""))
         }
-        
+
         menu.addItem(NSMenuItem.separator())
-        
+
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
-        
+
         menu.addItem(NSMenuItem.separator())
-        
+
         menu.addItem(NSMenuItem(title: "Quit Yappatron", action: #selector(quitAction), keyEquivalent: "q"))
-        
+
         self.statusItem.menu = menu
         self.statusItem.button?.performClick(nil)
         self.statusItem.menu = nil
     }
-    
+
     func updateStatusIcon() {
         guard let button = statusItem?.button else { return }
-        
+
         let symbolName: String
-        
+
         switch engine.status {
         case .initializing, .downloadingModels:
             symbolName = "waveform.badge.ellipsis"
@@ -376,20 +415,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         case .error:
             symbolName = "waveform.badge.exclamationmark"
         }
-        
+
         let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
         var image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Yappatron")
         image = image?.withSymbolConfiguration(config)
         button.image = image
     }
-    
+
     // MARK: - Overlay
-    
+
     func setupOverlay() {
         overlayWindow = OverlayWindow()
         overlayController = OverlayWindowController(window: overlayWindow!)
     }
-    
+
     func toggleOverlay() {
         if overlayWindow?.isVisible == true {
             overlayWindow?.orderOut(nil)
@@ -397,14 +436,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             showOverlay()
         }
     }
-    
+
     func showOverlay() {
         overlayWindow?.makeKeyAndOrderFront(nil)
         overlayWindow?.positionAtBottom()
     }
-    
+
     // MARK: - Hot Keys
-    
+
     func setupHotKeys() {
         togglePauseHotKey = HotKey(key: .escape, modifiers: [.command])
         togglePauseHotKey?.keyDownHandler = { [weak self] in
@@ -416,7 +455,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 }
             }
         }
-        
+
         toggleOverlayHotKey = HotKey(key: .space, modifiers: [.option])
         toggleOverlayHotKey?.keyDownHandler = { [weak self] in
             Task { @MainActor in
@@ -424,21 +463,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
     }
-    
+
     // MARK: - Actions
-    
+
     @objc func pauseAction() {
         isPaused = true
         engine.stopListening()
         updateStatusIcon()
     }
-    
+
     @objc func resumeAction() {
         isPaused = false
         engine.startListening()
         updateStatusIcon()
     }
-    
+
     @objc func toggleEnterAction() {
         pressEnterAfterSpeech.toggle()
     }
@@ -455,6 +494,73 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         alert.runModal()
     }
 
+    @objc func selectBackend(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let backend = STTBackend(rawValue: rawValue) else { return }
+
+        // Check for API key if selecting cloud backend
+        if backend == .deepgram && APIKeyStore.get(for: .deepgram) == nil {
+            promptForAPIKey(backend: .deepgram) { [weak self] success in
+                if success {
+                    self?.switchBackend(to: backend)
+                }
+            }
+            return
+        }
+
+        switchBackend(to: backend)
+    }
+
+    private func switchBackend(to backend: STTBackend) {
+        STTBackend.current = backend
+
+        let alert = NSAlert()
+        alert.messageText = "Restart Required"
+        alert.informativeText = "Switched to \(backend.rawValue). Please restart Yappatron for the change to take effect."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    @objc func setDeepgramAPIKey() {
+        promptForAPIKey(backend: .deepgram, completion: nil)
+    }
+
+    private func promptForAPIKey(backend: STTBackend, completion: ((Bool) -> Void)?) {
+        let alert = NSAlert()
+        alert.messageText = "Enter \(backend.rawValue) API Key"
+        alert.informativeText = "Your API key is stored securely in the macOS Keychain."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let inputField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        inputField.placeholderString = "Paste your API key here"
+
+        // Pre-fill with existing key (masked)
+        if let existingKey = APIKeyStore.get(for: backend) {
+            inputField.stringValue = existingKey
+        }
+
+        alert.accessoryView = inputField
+        alert.window.initialFirstResponder = inputField
+
+        let response = alert.runModal()
+
+        if response == .alertFirstButtonReturn {
+            let key = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty {
+                APIKeyStore.save(key: key, for: backend)
+                NSLog("[Yappatron] API key saved for \(backend.rawValue)")
+                completion?(true)
+            } else {
+                completion?(false)
+            }
+        } else {
+            completion?(false)
+        }
+    }
+
     @objc func selectOrbStyle(_ sender: NSMenuItem) {
         if let style = sender.representedObject as? OverlayViewModel.OrbStyle {
             overlayWindow?.overlayViewModel.orbStyle = style
@@ -468,12 +574,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @objc func hideOverlayAction() {
         overlayWindow?.orderOut(nil)
     }
-    
+
     @objc func showSettings() {
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
-    
+
     @objc func quitAction() {
         engine.cleanup()
         NSApp.terminate(nil)
@@ -488,16 +594,23 @@ struct SettingsView: View {
             Section("About") {
                 Text("Yappatron")
                     .font(.headline)
-                Text("Voice dictation powered by Parakeet TDT")
+                Text("Voice dictation powered by Parakeet TDT / Deepgram")
                     .foregroundStyle(.secondary)
             }
-            
+
             Section("Shortcuts") {
                 LabeledContent("Toggle Pause", value: "⌘ Escape")
                 LabeledContent("Toggle Indicator", value: "⌥ Space")
             }
+
+            Section("STT Backend") {
+                LabeledContent("Current", value: STTBackend.current.rawValue)
+                Text("Change via the menu bar right-click menu")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 350, height: 200)
+        .frame(width: 350, height: 250)
     }
 }

@@ -106,9 +106,9 @@ actor AudioChunkBuffer {
     }
 }
 
-/// Handles real-time streaming speech-to-text using FluidAudio's StreamingEouAsrManager
+/// Handles real-time streaming speech-to-text using pluggable STT backends
 class TranscriptionEngine: ObservableObject {
-    
+
     enum Status: Equatable {
         case initializing
         case downloadingModels
@@ -116,24 +116,25 @@ class TranscriptionEngine: ObservableObject {
         case listening
         case error(String)
     }
-    
+
     @Published var status: Status = .initializing
     @Published var isSpeaking = false
-    
+
     // Callbacks - called on main thread
     var onTranscription: ((String) -> Void)?           // Final text (on EOU)
     var onPartialTranscription: ((String) -> Void)?    // Ghost text (updates as you speak)
     var onSpeechStart: (() -> Void)?
     var onSpeechEnd: (() -> Void)?
     var onUtteranceComplete: (([Float], String) -> Void)?  // Audio samples + streamed text for refinement
-    
-    // Streaming ASR
-    private var streamingManager: StreamingEouAsrManager?
-    
+
+    // STT provider (local or cloud)
+    private var sttProvider: STTProvider?
+    private let backend: STTBackend
+
     // Audio capture
     private var audioEngine: AVAudioEngine?
     private var inputNode: AVAudioInputNode?
-    
+
     // Track current partial for diffing
     private var currentPartial: String = ""
 
@@ -144,14 +145,15 @@ class TranscriptionEngine: ObservableObject {
     // Audio chunk buffer for batch re-processing (will be initialized after audio format is known)
     private var audioChunkBuffer: AudioChunkBuffer?
 
-    init() {
-        log("TranscriptionEngine initialized")
+    init(backend: STTBackend = .current) {
+        self.backend = backend
+        log("TranscriptionEngine initialized (backend: \(backend.rawValue))")
     }
-    
+
     private func requestMicrophonePermission() async -> Bool {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         log("Microphone auth status: \(status.rawValue)")
-        
+
         switch status {
         case .authorized:
             return true
@@ -168,11 +170,11 @@ class TranscriptionEngine: ObservableObject {
             return false
         }
     }
-    
+
     func start() async {
         await MainActor.run { status = .initializing }
-        log("Starting TranscriptionEngine (streaming mode)...")
-        
+        log("Starting TranscriptionEngine (backend: \(backend.rawValue))...")
+
         do {
             // Request microphone permission first
             log("Requesting microphone permission...")
@@ -183,39 +185,25 @@ class TranscriptionEngine: ObservableObject {
                 return
             }
             log("Microphone permission granted")
-            
-            // Download streaming models
+
+            // Create and start the STT provider
             await MainActor.run { status = .downloadingModels }
-            log("Downloading streaming models...")
-            
-            let modelDir = try await downloadStreamingModels()
-            log("Models downloaded to: \(modelDir.path)")
-            
-            // Initialize StreamingEouAsrManager
-            log("Initializing StreamingEouAsrManager...")
-            let config = MLModelConfiguration()
-            config.computeUnits = .cpuAndNeuralEngine
-            
-            let manager = StreamingEouAsrManager(
-                configuration: config,
-                chunkSize: .ms320,      // 320ms chunks for better accuracy
-                eouDebounceMs: 800      // 800ms silence to confirm end (was 1280)
-            )
-            
-            try await manager.loadModels(modelDir: modelDir)
-            
-            // Set up callbacks
-            await manager.setPartialCallback { [weak self] partial in
+
+            let provider = createProvider()
+
+            // Wire up provider callbacks
+            provider.onPartial = { [weak self] partial in
                 self?.handlePartialTranscription(partial)
             }
-            
-            await manager.setEouCallback { [weak self] final in
+            provider.onFinal = { [weak self] final in
                 self?.handleFinalTranscription(final)
             }
-            
-            streamingManager = manager
-            log("StreamingEouAsrManager initialized")
-            
+
+            log("Starting STT provider...")
+            try await provider.start()
+            sttProvider = provider
+            log("STT provider ready")
+
             // Setup audio capture
             let processingFormat = try setupAudioCapture()
 
@@ -226,45 +214,26 @@ class TranscriptionEngine: ObservableObject {
             startAudioProcessing()
 
             await MainActor.run { status = .ready }
-            log("TranscriptionEngine ready (streaming mode)!")
-            
+            log("TranscriptionEngine ready!")
+
         } catch {
             await MainActor.run { status = .error(error.localizedDescription) }
             log("TranscriptionEngine error: \(error.localizedDescription)")
         }
     }
-    
-    private func downloadStreamingModels() async throws -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let modelsDir = appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)
-        let modelPath = modelsDir.appendingPathComponent(Repo.parakeetEou320.folderName)
 
-        // Check if models already exist (just check for streaming_encoder)
-        let encoderPath = modelPath.appendingPathComponent("streaming_encoder.mlmodelc")
-        if FileManager.default.fileExists(atPath: encoderPath.path) {
-            log("Streaming models already cached")
-            return modelPath
+    private func createProvider() -> STTProvider {
+        switch backend {
+        case .local:
+            log("Creating LocalSTTProvider (Parakeet)")
+            return LocalSTTProvider()
+        case .deepgram:
+            let apiKey = APIKeyStore.get(for: .deepgram) ?? ""
+            log("Creating DeepgramSTTProvider")
+            return DeepgramSTTProvider(apiKey: apiKey)
         }
-
-        // Download the 320M streaming models for improved accuracy
-        // (vocab.json is used, not tokenizer.model)
-        let actuallyNeeded = [
-            ModelNames.ParakeetEOU.encoderFile,
-            ModelNames.ParakeetEOU.decoderFile,
-            ModelNames.ParakeetEOU.jointFile,
-            ModelNames.ParakeetEOU.vocab
-        ]
-
-        _ = try await DownloadUtils.loadModels(
-            .parakeetEou320,
-            modelNames: actuallyNeeded,
-            directory: modelsDir,
-            computeUnits: .cpuAndNeuralEngine
-        )
-
-        return modelPath
     }
-    
+
     private func handlePartialTranscription(_ partial: String) {
         let trimmed = partial.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -288,7 +257,7 @@ class TranscriptionEngine: ObservableObject {
             self?.onPartialTranscription?(trimmed)
         }
     }
-    
+
     private func handleFinalTranscription(_ final: String) {
         let trimmed = final.trimmingCharacters(in: .whitespacesAndNewlines)
         log("Final (EOU): '\(trimmed)'")
@@ -296,7 +265,7 @@ class TranscriptionEngine: ObservableObject {
         // Reset partial tracking
         currentPartial = ""
 
-        // Get audio samples for batch refinement (if enabled)
+        // Get audio samples for batch refinement (if enabled and backend is local)
         Task {
             let audioSamples = await audioChunkBuffer?.getAsSamples() ?? []
             let bufferCount = await audioChunkBuffer?.bufferCount() ?? 0
@@ -304,7 +273,7 @@ class TranscriptionEngine: ObservableObject {
             if !audioSamples.isEmpty {
                 let duration = Float(audioSamples.count) / 16000.0
                 log("Captured \(bufferCount) audio chunks (\(String(format: "%.1f", duration))s) for utterance")
-            } else {
+            } else if !backend.returnsPunctuatedText {
                 log("Warning: No audio samples captured for utterance")
             }
 
@@ -312,11 +281,9 @@ class TranscriptionEngine: ObservableObject {
                 if !trimmed.isEmpty {
                     self?.onTranscription?(trimmed)
 
-                    // Provide audio samples and streamed text for refinement (if callback is set)
-                    if !audioSamples.isEmpty {
+                    // Only provide audio for refinement if backend doesn't already punctuate
+                    if !(self?.backend.returnsPunctuatedText ?? true) && !audioSamples.isEmpty {
                         self?.onUtteranceComplete?(audioSamples, trimmed)
-                    } else {
-                        log("Skipping refinement callback - no audio samples available")
                     }
                 }
 
@@ -326,15 +293,14 @@ class TranscriptionEngine: ObservableObject {
             }
 
             // Clear audio chunk buffer AFTER refinement callback
-            // This ensures the callback has access to the complete audio
             await audioChunkBuffer?.clear()
             log("Audio chunk buffer cleared")
 
-            // Reset the streaming manager for next utterance
-            await streamingManager?.reset()
+            // Reset the provider for next utterance
+            await sttProvider?.reset()
         }
     }
-    
+
     func startListening() {
         switch status {
         case .ready, .listening:
@@ -343,35 +309,35 @@ class TranscriptionEngine: ObservableObject {
             log("Cannot start listening - status is \(String(describing: self.status))")
             return
         }
-        
+
         do {
             try audioEngine?.start()
             status = .listening
-            log("Listening started (streaming)")
+            log("Listening started")
         } catch {
             status = .error(error.localizedDescription)
             log("Failed to start audio engine: \(error.localizedDescription)")
         }
     }
-    
+
     func stopListening() {
         audioEngine?.stop()
         status = .ready
-        
+
         // Finish any pending transcription
         Task {
-            if let manager = streamingManager {
-                let final = try? await manager.finish()
+            if let provider = sttProvider {
+                let final = try? await provider.finish()
                 if let text = final, !text.isEmpty {
                     handleFinalTranscription(text)
                 }
-                await manager.reset()
+                await provider.reset()
             }
         }
-        
+
         log("Listening stopped")
     }
-    
+
     private func setupAudioCapture() throws -> AVAudioFormat {
         log("Setting up audio capture...")
         audioEngine = AVAudioEngine()
@@ -385,7 +351,7 @@ class TranscriptionEngine: ObservableObject {
         let inputFormat = inputNode.outputFormat(forBus: 0)
         log("Input format: \(inputFormat.channelCount) channels, \(inputFormat.sampleRate) Hz")
 
-        // Create format for streaming manager (16kHz mono)
+        // Create format for processing (16kHz mono)
         guard let processingFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 16000,
@@ -405,7 +371,7 @@ class TranscriptionEngine: ObservableObject {
         log("Audio capture setup complete")
         return processingFormat
     }
-    
+
     private var audioChunkCount = 0
 
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat, outputFormat: AVAudioFormat) {
@@ -453,14 +419,14 @@ class TranscriptionEngine: ObservableObject {
                 // Dequeue and process buffers serially
                 if let buffer = await self.audioBufferQueue.dequeue() {
                     do {
-                        _ = try await self.streamingManager?.process(audioBuffer: buffer)
+                        try await self.sttProvider?.processAudio(buffer)
 
                         // FIX: Always save audio chunks for batch refinement (unconditional)
                         // This ensures we capture the complete utterance from the beginning,
                         // not just after isSpeaking flag is set (which happens after first partial arrives)
                         await self.audioChunkBuffer?.append(buffer)
                     } catch {
-                        log("Streaming process error: \(error.localizedDescription)")
+                        log("STT process error: \(error.localizedDescription)")
                     }
                 } else {
                     // No buffers available, wait a bit
@@ -477,13 +443,14 @@ class TranscriptionEngine: ObservableObject {
             await audioBufferQueue.clear()
         }
     }
-    
+
     func cleanup() {
         stopListening()
         stopAudioProcessing()
         inputNode?.removeTap(onBus: 0)
         audioEngine = nil
-        streamingManager = nil
+        sttProvider?.cleanup()
+        sttProvider = nil
         log("TranscriptionEngine cleaned up")
     }
 }
