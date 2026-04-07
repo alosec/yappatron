@@ -10,6 +10,7 @@ class LocalSTTProvider: STTProvider {
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
     var onLockedTextAdvanced: ((Int) -> Void)?
+    var onSpeakerLabel: ((String) -> Void)?
 
     func start() async throws {
         let modelDir = try await downloadModels()

@@ -127,6 +127,11 @@ class TranscriptionEngine: ObservableObject {
     var onSpeechStart: (() -> Void)?
     var onSpeechEnd: (() -> Void)?
     var onUtteranceComplete: (([Float], String) -> Void)?  // Audio samples + streamed text for refinement
+    /// Fired when the gate identifies the active speaker for the upcoming verified
+    /// window. Only fires when a VoiceIsolationGate is wrapping the provider.
+    var onSpeakerLabel: ((String) -> Void)?
+    /// Fired when capture mode persists a new Unknown speaker to the registry.
+    var onCapturedUnknown: ((RegisteredSpeaker) -> Void)?
 
     // STT provider (local or cloud) — may be a VoiceIsolationGate decorating the real provider.
     private var sttProvider: STTProvider?
@@ -135,6 +140,11 @@ class TranscriptionEngine: ObservableObject {
     /// Shared embedding extractor — held here so the enrollment flow can reuse the
     /// already-loaded diarizer models instead of paying download/load cost twice.
     let voiceExtractor = VoiceEmbeddingExtractor()
+
+    /// The active VoiceIsolationGate, if one is wrapping the inner provider.
+    /// Held weakly-typed here so callers can hot-swap the decision when entering
+    /// or leaving meeting mode without restarting the engine.
+    private(set) var activeGate: VoiceIsolationGate?
 
     // Audio capture
     private var audioEngine: AVAudioEngine?
@@ -196,27 +206,34 @@ class TranscriptionEngine: ObservableObject {
 
             let baseProvider = createProvider()
 
-            // Wrap in VoiceIsolationGate if the user has enrolled and isolation is enabled.
-            // The gate is a transparent decorator: when no voiceprint exists or the toggle
-            // is off, this branch is skipped and behavior is identical to before.
+            // Wrap in VoiceIsolationGate if isolation is enabled and at least one
+            // speaker is registered. The gate is a transparent decorator: when the
+            // registry is empty or isolation is off, this branch is skipped and
+            // behavior is identical to the bare provider.
             let provider: STTProvider
-            if VoiceIsolationConfig.enabled, let voiceprint = VoiceprintStore.load() {
-                log("Voice isolation: ENABLED (enrolled='\(voiceprint.name)', threshold=\(VoiceIsolationConfig.threshold))")
+            let registry = SpeakerRegistry.loadAll()
+            if VoiceIsolationConfig.enabled, !registry.isEmpty {
+                log("Voice isolation: ENABLED (\(registry.count) speakers, captureMode=\(VoiceIsolationConfig.captureUnknownsEnabled), threshold=\(VoiceIsolationConfig.threshold))")
                 do {
                     try await voiceExtractor.loadIfNeeded()
-                    provider = VoiceIsolationGate(
+                    let lookup = RegistrySpeakerLookup(registry: registry, threshold: VoiceIsolationConfig.threshold)
+                    let decision: SpeakerDecision = VoiceIsolationConfig.captureUnknownsEnabled
+                        ? RegistryCaptureDecision(lookup: lookup)
+                        : RegistryAllowlistDecision(lookup: lookup)
+                    let gate = VoiceIsolationGate(
                         inner: baseProvider,
                         extractor: voiceExtractor,
-                        voiceprint: voiceprint,
-                        threshold: VoiceIsolationConfig.threshold
+                        decision: decision
                     )
+                    self.activeGate = gate
+                    provider = gate
                 } catch {
                     log("Voice isolation: failed to load extractor (\(error.localizedDescription)) — falling back to direct provider")
                     provider = baseProvider
                 }
             } else {
-                if !VoiceprintStore.hasEnrolledVoiceprint {
-                    log("Voice isolation: no enrolled voiceprint, running without gate")
+                if registry.isEmpty {
+                    log("Voice isolation: no speakers registered, running without gate")
                 } else {
                     log("Voice isolation: disabled by user, running without gate")
                 }
@@ -233,6 +250,15 @@ class TranscriptionEngine: ObservableObject {
             provider.onLockedTextAdvanced = { [weak self] lockedLen in
                 // Called on main thread from provider — pass through directly
                 self?.onLockedTextAdvanced?(lockedLen)
+            }
+            provider.onSpeakerLabel = { [weak self] name in
+                self?.onSpeakerLabel?(name)
+            }
+            // Wire the gate's captured-unknown callback through the engine
+            if let gate = activeGate {
+                gate.onCapturedUnknown = { [weak self] captured in
+                    self?.onCapturedUnknown?(captured)
+                }
             }
 
             log("Starting STT provider...")
@@ -335,6 +361,23 @@ class TranscriptionEngine: ObservableObject {
             // Reset the provider for next utterance
             await sttProvider?.reset()
         }
+    }
+
+    /// Replace the active gate's decision policy without restarting the engine.
+    /// Used when entering or leaving meeting mode. No-op if no gate is active.
+    func swapGateDecision(_ decision: SpeakerDecision) {
+        guard let gate = activeGate else {
+            log("swapGateDecision: no active gate, ignoring")
+            return
+        }
+        gate.setDecision(decision)
+    }
+
+    /// Build a fresh RegistrySpeakerLookup from the current on-disk registry.
+    /// Use after enrolling a new speaker so subsequent verifications see them.
+    func currentRegistryLookup() -> RegistrySpeakerLookup {
+        let registry = SpeakerRegistry.loadAll()
+        return RegistrySpeakerLookup(registry: registry, threshold: VoiceIsolationConfig.threshold)
     }
 
     func startListening() {

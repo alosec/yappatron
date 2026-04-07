@@ -24,40 +24,39 @@ final class SpeakerEnrollmentManager {
         self.extractor = extractor
     }
 
-    /// Capture mic audio for `duration` seconds, extract the user's embedding, and persist it.
+    /// Capture mic audio for `duration` seconds, extract the speaker's embedding,
+    /// and persist them to the registry as an enrolled (allowed) speaker.
     /// Throws on permission/IO/extraction failures.
     func enroll(
-        name: String = "Me",
+        name: String,
         duration: TimeInterval = enrollmentDurationSeconds
-    ) async throws -> StoredVoiceprint {
+    ) async throws -> RegisteredSpeaker {
 
-        // Permission gate
         let granted = await Self.requestMicrophonePermission()
         guard granted else { throw EnrollmentError.microphoneDenied }
 
-        // Make sure the extractor is loaded *before* we start recording so the user
-        // doesn't sit through "downloading models" with a hot mic.
+        // Load the extractor up front so the user doesn't sit through model
+        // downloads with a hot mic.
         try await extractor.loadIfNeeded()
 
-        // Capture
         let samples = try await captureAudio(for: duration)
 
-        // Extract embedding
         guard let embedding = await extractor.extractDominantEmbedding(from: samples) else {
             throw EnrollmentError.extractionFailed
         }
 
-        let voiceprint = StoredVoiceprint(
+        let speaker = RegisteredSpeaker(
             id: UUID().uuidString,
             name: name,
             embedding: embedding,
-            durationSeconds: Float(duration),
+            allowed: true,
+            source: .enrolled,
             createdAt: Date(),
             updatedAt: Date()
         )
-        try VoiceprintStore.save(voiceprint)
+        try SpeakerRegistry.upsert(speaker)
         log("SpeakerEnrollmentManager: enrolled '\(name)', \(embedding.count)-dim embedding")
-        return voiceprint
+        return speaker
     }
 
     // MARK: - Audio capture

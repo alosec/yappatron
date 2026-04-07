@@ -22,6 +22,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
     var onLockedTextAdvanced: ((Int) -> Void)?
+    var onSpeakerLabel: ((String) -> Void)?
 
     init(apiKey: String) {
         self.apiKey = apiKey

@@ -33,6 +33,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var togglePauseHotKey: HotKey?
     var toggleOverlayHotKey: HotKey?
 
+    // Voice Isolation / Meeting Mode
+    let unknownNotifier = UnknownSpeakerNotifier()
+    var manageSpeakersWindowController: ManageSpeakersWindowController?
+    var activeMeetingSession: MeetingSession?
+    var savedDictationCallbacks: (transcription: ((String) -> Void)?, speakerLabel: ((String) -> Void)?)?
+
     // State
     @Published var isPaused = false
     @Published var currentTypedText = "" // What we've typed so far (for backspace corrections)
@@ -104,6 +110,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     NSLog("[Yappatron] Batch processor initialization failed: \(error.localizedDescription)")
                     NSLog("[Yappatron] Falling back to streaming-only mode")
                 }
+            }
+        }
+
+        // Wire up the captured-unknown notification path
+        engine.onCapturedUnknown = { [weak self] speaker in
+            self?.unknownNotifier.notifyCaptured(speaker)
+        }
+
+        // Listen for the in-window "Stop Meeting" button
+        NotificationCenter.default.addObserver(
+            forName: .stopMeetingMode,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let session = self.activeMeetingSession else { return }
+                self.stopMeetingMode(session: session)
             }
         }
 
@@ -384,9 +407,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let isolationItem = NSMenuItem(title: "Voice Isolation", action: nil, keyEquivalent: "")
         let isolationMenu = NSMenu()
 
-        let enrolled = VoiceprintStore.hasEnrolledVoiceprint
+        let allSpeakers = SpeakerRegistry.loadAll()
+        let allowedCount = allSpeakers.filter { $0.allowed }.count
         let statusLabel = NSMenuItem(
-            title: enrolled ? "Status: Enrolled ✓" : "Status: Not enrolled",
+            title: allSpeakers.isEmpty
+                ? "Status: No speakers registered"
+                : "Status: \(allSpeakers.count) registered, \(allowedCount) allowed",
             action: nil,
             keyEquivalent: ""
         )
@@ -398,21 +424,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             action: #selector(toggleVoiceIsolation),
             keyEquivalent: ""
         )
-        toggleItem.state = (enrolled && VoiceIsolationConfig.enabled) ? .on : .off
-        toggleItem.isEnabled = enrolled
+        toggleItem.state = (!allSpeakers.isEmpty && VoiceIsolationConfig.enabled) ? .on : .off
+        toggleItem.isEnabled = !allSpeakers.isEmpty
         isolationMenu.addItem(toggleItem)
+
+        let captureItem = NSMenuItem(
+            title: "Capture Unknown Voices",
+            action: #selector(toggleCaptureMode),
+            keyEquivalent: ""
+        )
+        captureItem.state = VoiceIsolationConfig.captureUnknownsEnabled ? .on : .off
+        isolationMenu.addItem(captureItem)
 
         isolationMenu.addItem(NSMenuItem.separator())
 
-        let enrollTitle = enrolled ? "Re-enroll My Voice…" : "Enroll My Voice…"
-        isolationMenu.addItem(NSMenuItem(title: enrollTitle, action: #selector(enrollVoiceAction), keyEquivalent: ""))
-
-        if enrolled {
-            isolationMenu.addItem(NSMenuItem(title: "Clear Voiceprint", action: #selector(clearVoiceprintAction), keyEquivalent: ""))
-        }
+        isolationMenu.addItem(NSMenuItem(title: "Add Speaker…", action: #selector(addSpeakerAction), keyEquivalent: ""))
+        isolationMenu.addItem(NSMenuItem(title: "Manage Speakers…", action: #selector(manageSpeakersAction), keyEquivalent: ""))
 
         isolationItem.submenu = isolationMenu
         menu.addItem(isolationItem)
+
+        // Meeting mode top-level item
+        let meetingTitle = activeMeetingSession == nil ? "Start Meeting Mode" : "Stop Meeting Mode"
+        let meetingItem = NSMenuItem(title: meetingTitle, action: #selector(toggleMeetingMode), keyEquivalent: "")
+        meetingItem.isEnabled = !allSpeakers.isEmpty
+        menu.addItem(meetingItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -620,16 +656,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     // MARK: - Voice Isolation actions
 
-    private static let enrollmentScript = """
-    The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. \
-    How razorback jumping frogs can level six piqued gymnasts. The five boxing wizards jump \
-    quickly. Sphinx of black quartz, judge my vow. We promptly judged antique ivory buckles \
-    of the next prize.
-    """
-
     @objc func toggleVoiceIsolation() {
         VoiceIsolationConfig.enabled.toggle()
-
         let alert = NSAlert()
         alert.messageText = "Restart Required"
         alert.informativeText = "Voice isolation is now \(VoiceIsolationConfig.enabled ? "ON" : "OFF"). Please restart Yappatron for the change to take effect."
@@ -638,90 +666,93 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         alert.runModal()
     }
 
-    @objc func enrollVoiceAction() {
-        // Walk the user through the script, capture, then report.
-        let intro = NSAlert()
-        intro.messageText = "Enroll Your Voice"
-        intro.informativeText = """
-        Yappatron will record \(Int(SpeakerEnrollmentManager.enrollmentDurationSeconds)) seconds of your voice to learn what you sound like. \
-        After this, only your voice will be transcribed — background voices will be ignored.
+    @objc func toggleCaptureMode() {
+        VoiceIsolationConfig.captureUnknownsEnabled.toggle()
+        if VoiceIsolationConfig.captureUnknownsEnabled {
+            unknownNotifier.requestPermissionIfNeeded()
+        }
+        let alert = NSAlert()
+        alert.messageText = "Restart Required"
+        alert.informativeText = """
+            Capture mode is now \(VoiceIsolationConfig.captureUnknownsEnabled ? "ON" : "OFF").
+            \(VoiceIsolationConfig.captureUnknownsEnabled ? "Unknown voices will be saved to your registry as 'Unknown N' for you to name later." : "Unknown voices will be silently dropped.")
+            Please restart Yappatron for the change to take effect.
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
 
-        When you click Start, read the paragraph below in your normal speaking voice:
-
-        \(Self.enrollmentScript)
-        """
-        intro.alertStyle = .informational
-        intro.addButton(withTitle: "Start")
-        intro.addButton(withTitle: "Cancel")
-
-        let response = intro.runModal()
-        guard response == .alertFirstButtonReturn else { return }
-
-        // Pause the engine so it doesn't fight the enrollment manager for the mic.
+    @objc func addSpeakerAction() {
+        // Pause the engine while we hold the mic.
         let wasListening: Bool = {
             if case .listening = engine.status { return true }
             return false
         }()
-        if wasListening {
-            engine.stopListening()
+        if wasListening { engine.stopListening() }
+
+        let flow = AddSpeakerFlow(extractor: engine.voiceExtractor) { speaker in
+            NSLog("[Yappatron] Added speaker: \(speaker.name) (\(speaker.id))")
         }
+        flow.run()
 
-        let recordingAlert = NSAlert()
-        recordingAlert.messageText = "Recording…"
-        recordingAlert.informativeText = "Reading the paragraph aloud now. This window will close automatically when recording finishes."
-        recordingAlert.alertStyle = .informational
-
-        // Run the capture concurrently with the modal so the modal closes when capture finishes.
-        let extractor = engine.voiceExtractor
-        let manager = SpeakerEnrollmentManager(extractor: extractor)
-
-        Task { @MainActor in
-            do {
-                let voiceprint = try await manager.enroll()
-                NSApp.stopModal(withCode: .alertFirstButtonReturn)
-                let success = NSAlert()
-                success.messageText = "Enrolled ✓"
-                success.informativeText = "Your voice has been saved. Voice isolation will activate after the next restart."
-                success.alertStyle = .informational
-                success.addButton(withTitle: "OK")
-                success.runModal()
-                NSLog("[Yappatron] Voice enrolled: \(voiceprint.name) (\(voiceprint.embedding.count)-dim)")
-            } catch {
-                NSApp.stopModal(withCode: .alertSecondButtonReturn)
-                let failure = NSAlert()
-                failure.messageText = "Enrollment Failed"
-                failure.informativeText = "Could not enroll voice: \(error.localizedDescription)"
-                failure.alertStyle = .warning
-                failure.addButton(withTitle: "OK")
-                failure.runModal()
-            }
-
-            if wasListening {
-                engine.startListening()
-            }
-        }
-
-        // Block UI until the Task above stops the modal.
-        NSApp.runModal(for: recordingAlert.window)
+        if wasListening { engine.startListening() }
     }
 
-    @objc func clearVoiceprintAction() {
-        let confirm = NSAlert()
-        confirm.messageText = "Clear Voiceprint?"
-        confirm.informativeText = "This will remove your enrolled voice. Voice isolation will be disabled until you re-enroll."
-        confirm.alertStyle = .warning
-        confirm.addButton(withTitle: "Clear")
-        confirm.addButton(withTitle: "Cancel")
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+    @objc func manageSpeakersAction() {
+        if manageSpeakersWindowController == nil {
+            manageSpeakersWindowController = ManageSpeakersWindowController()
+        }
+        manageSpeakersWindowController?.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 
-        VoiceprintStore.delete()
+    // MARK: - Meeting Mode actions
 
-        let done = NSAlert()
-        done.messageText = "Voiceprint Cleared"
-        done.informativeText = "Restart Yappatron for the change to take effect."
-        done.alertStyle = .informational
-        done.addButton(withTitle: "OK")
-        done.runModal()
+    @objc func toggleMeetingMode() {
+        if let active = activeMeetingSession {
+            stopMeetingMode(session: active)
+        } else {
+            startMeetingMode()
+        }
+    }
+
+    private func startMeetingMode() {
+        guard SpeakerRegistry.hasAnySpeaker else {
+            let alert = NSAlert()
+            alert.messageText = "No Speakers Registered"
+            alert.informativeText = "Add at least one speaker via Voice Isolation → Add Speaker… before starting meeting mode."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        // Snapshot the dictation callbacks so we can restore them on stop.
+        savedDictationCallbacks = (engine.onTranscription, engine.onSpeakerLabel)
+
+        let session = MeetingSession(engine: engine)
+        activeMeetingSession = session
+        session.start()
+        updateStatusIcon()
+    }
+
+    private func stopMeetingMode(session: MeetingSession) {
+        session.stop()
+        activeMeetingSession = nil
+
+        // Restore dictation routing.
+        engine.onTranscription = savedDictationCallbacks?.transcription
+        engine.onSpeakerLabel = savedDictationCallbacks?.speakerLabel
+        savedDictationCallbacks = nil
+
+        // Re-install the configured isolation decision (allowlist or capture).
+        let lookup = engine.currentRegistryLookup()
+        let decision: SpeakerDecision = VoiceIsolationConfig.captureUnknownsEnabled
+            ? RegistryCaptureDecision(lookup: lookup)
+            : RegistryAllowlistDecision(lookup: lookup)
+        engine.swapGateDecision(decision)
+        updateStatusIcon()
     }
 
     @objc func selectOrbStyle(_ sender: NSMenuItem) {

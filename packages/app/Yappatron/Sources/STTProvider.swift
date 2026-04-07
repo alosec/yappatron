@@ -23,4 +23,8 @@ protocol STTProvider: AnyObject {
     var onFinal: ((String) -> Void)? { get set }
     /// Called when locked (is_final) text advances — parameter is the locked text length
     var onLockedTextAdvanced: ((Int) -> Void)? { get set }
+    /// Called when the active speaker for the current verified window is identified
+    /// (only fires from VoiceIsolationGate; raw providers leave this nil).
+    var onSpeakerLabel: ((String) -> Void)? { get set }
 }
+

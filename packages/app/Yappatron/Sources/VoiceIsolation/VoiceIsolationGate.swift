@@ -1,48 +1,55 @@
 import AVFoundation
 import Foundation
 
-/// Decorator over an STTProvider that only forwards audio when the speaker matches
-/// the enrolled user's voiceprint. Strangers' speech never reaches the inner provider
-/// — no text leak, no Deepgram billing for non-user audio.
+/// Decorator over an STTProvider that runs each speech window through a
+/// SpeakerDecision before letting audio reach the inner provider.
 ///
-/// State machine, per "speech window":
+/// The gate is mode-agnostic — isolation, capture, and meeting modes are
+/// expressed by passing a different SpeakerDecision implementation. The state
+/// machine, the energy VAD, and the buffer-then-flush semantics are shared.
+///
+/// State machine:
 ///
 ///   idle ──speech──▶ accumulating ──≥1s of speech──▶ verify
 ///    ▲                    │                              │
 ///    │                    └──silence (too short)─────────┤
 ///    │                                                   │
-///    │                                       ┌───match───┘
+///    │                                       ┌──allow────┘
 ///    │                                       │
 ///    │                                       ▼
 ///    │                                   streaming ──silence──▶ idle
 ///    │                                       │
 ///    │                                       └──extended silence──▶ idle
 ///    │                                                   │
-///    │                                       ┌──reject───┘
+///    │                                       ┌──deny─────┘
+///    │                                       │
 ///    │                                       ▼
 ///    └──silence────────────────────────── dropping
 ///
-/// Notes:
-/// - "Speech" is detected via cheap RMS energy gating, not via a model.
-///   This is fine because the speaker-verification step is the actual decision;
-///   VAD only chunks the audio into windows.
-/// - When verified, the *entire* buffered window is flushed to the inner provider
-///   in order, so the user's first words appear intact (just delayed by ~1s on the
-///   first utterance of a window).
-/// - When rejected, the buffered window is dropped and reset() is called on the
-///   inner provider so its own EOU/segment state is clean.
+/// Properties:
+/// - When the decision is .allow, the *entire* buffered window is flushed to
+///   the inner provider in order, so the user's first words appear intact
+///   (delayed by ~1s on the first utterance of a window).
+/// - When the decision is .deny or .captureUnknown, the inner provider sees
+///   nothing, and reset() is called on the inner provider to clear partial state.
+/// - When .captureUnknown is returned, the gate writes a new "Unknown N" entry
+///   to the SpeakerRegistry and posts an OS notification via `onCapturedUnknown`.
 final class VoiceIsolationGate: STTProvider, @unchecked Sendable {
 
     // MARK: STTProvider conformance
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
     var onLockedTextAdvanced: ((Int) -> Void)?
+    var onSpeakerLabel: ((String) -> Void)?
 
     // MARK: Dependencies
     private let inner: STTProvider
     private let extractor: VoiceEmbeddingExtractor
-    private let enrolledEmbedding: [Float]
-    private let threshold: Float
+    private var decision: SpeakerDecision
+
+    /// Called on the main thread whenever a new Unknown speaker is captured.
+    /// The handler typically posts a UNNotification and may update menu state.
+    var onCapturedUnknown: ((RegisteredSpeaker) -> Void)?
 
     // MARK: State machine
     private enum State {
@@ -54,39 +61,42 @@ final class VoiceIsolationGate: STTProvider, @unchecked Sendable {
     private var state: State = .idle
 
     // MARK: Tunables
-    /// Sample rate of incoming audio (we assume the engine has already converted to 16k mono).
     private let sampleRate: Double = 16000
-    /// RMS threshold to consider a buffer as speech. Tuned conservative;
-    /// the verification step is the real gate.
     private let speechRmsThreshold: Float = 0.005
-    /// Minimum amount of buffered speech audio (in samples) before running verification.
     private var minVerifySamples: Int { Int(sampleRate * 1.0) }
-    /// Number of consecutive silent buffers before we treat the window as ended.
-    private let silenceBuffersToReset: Int = 8  // ~256ms * 8 ≈ 2s, well below EOU
+    private let silenceBuffersToReset: Int = 8  // ~256ms * 8 ≈ 2s
     private var consecutiveSilentBuffers: Int = 0
 
-    // MARK: Buffered audio while accumulating
     private var pendingBuffers: [AVAudioPCMBuffer] = []
 
-    // MARK: Stats (for debugging / future UI)
+    // MARK: Stats
     private(set) var verifiedWindowsCount: Int = 0
     private(set) var rejectedWindowsCount: Int = 0
+    private(set) var capturedUnknownCount: Int = 0
 
     // MARK: Init
 
-    init(inner: STTProvider, extractor: VoiceEmbeddingExtractor, voiceprint: StoredVoiceprint, threshold: Float) {
+    init(
+        inner: STTProvider,
+        extractor: VoiceEmbeddingExtractor,
+        decision: SpeakerDecision
+    ) {
         self.inner = inner
         self.extractor = extractor
-        self.enrolledEmbedding = voiceprint.embedding
-        self.threshold = threshold
+        self.decision = decision
 
-        // Wire inner callbacks straight through. The gate only controls *what audio*
-        // reaches the inner provider; once audio flows, transcription proceeds normally.
         self.inner.onPartial = { [weak self] partial in self?.onPartial?(partial) }
         self.inner.onFinal = { [weak self] final in self?.onFinal?(final) }
         self.inner.onLockedTextAdvanced = { [weak self] len in self?.onLockedTextAdvanced?(len) }
 
-        log("VoiceIsolationGate: ready (threshold=\(threshold), enrolled='\(voiceprint.name)')")
+        log("VoiceIsolationGate: ready (decision=\(type(of: decision)))")
+    }
+
+    /// Hot-swap the decision policy. Used when toggling between isolation,
+    /// capture, and meeting mode without restarting the provider.
+    func setDecision(_ newDecision: SpeakerDecision) {
+        self.decision = newDecision
+        log("VoiceIsolationGate: decision swapped to \(type(of: newDecision))")
     }
 
     // MARK: STTProvider methods
@@ -106,7 +116,6 @@ final class VoiceIsolationGate: STTProvider, @unchecked Sendable {
                 consecutiveSilentBuffers = 0
                 state = .accumulating
             }
-            // Otherwise: idle silence, ignore.
 
         case .accumulating:
             pendingBuffers.append(copyBuffer(buffer))
@@ -116,12 +125,10 @@ final class VoiceIsolationGate: STTProvider, @unchecked Sendable {
                 consecutiveSilentBuffers += 1
             }
 
-            // Have we accumulated enough speech to verify?
             let accumulatedSamples = pendingBuffers.reduce(0) { $0 + Int($1.frameLength) }
             if accumulatedSamples >= minVerifySamples {
                 await runVerification()
             } else if consecutiveSilentBuffers >= silenceBuffersToReset {
-                // Window ended before we had enough audio to verify. Discard.
                 log("VoiceIsolationGate: window too short to verify (\(accumulatedSamples) samples), dropping")
                 pendingBuffers.removeAll(keepingCapacity: true)
                 consecutiveSilentBuffers = 0
@@ -129,7 +136,6 @@ final class VoiceIsolationGate: STTProvider, @unchecked Sendable {
             }
 
         case .streaming:
-            // Verified user — pass audio straight through.
             try await inner.processAudio(buffer)
             if isSpeech {
                 consecutiveSilentBuffers = 0
@@ -138,13 +144,10 @@ final class VoiceIsolationGate: STTProvider, @unchecked Sendable {
                 if consecutiveSilentBuffers >= silenceBuffersToReset {
                     consecutiveSilentBuffers = 0
                     state = .idle
-                    // Don't reset the inner provider here — it manages its own EOU
-                    // and we want the trailing silence to count toward that.
                 }
             }
 
         case .dropping:
-            // We're discarding this window. Wait for silence to return to idle.
             if isSpeech {
                 consecutiveSilentBuffers = 0
             } else {
@@ -175,9 +178,9 @@ final class VoiceIsolationGate: STTProvider, @unchecked Sendable {
     // MARK: - Verification
 
     private func runVerification() async {
-        // Concatenate accumulated samples for the embedding extractor.
+        let totalSamples = pendingBuffers.reduce(0) { $0 + Int($1.frameLength) }
         var samples: [Float] = []
-        samples.reserveCapacity(pendingBuffers.reduce(0) { $0 + Int($1.frameLength) })
+        samples.reserveCapacity(totalSamples)
         for buf in pendingBuffers {
             guard let channelData = buf.floatChannelData else { continue }
             let frameLength = Int(buf.frameLength)
@@ -185,22 +188,27 @@ final class VoiceIsolationGate: STTProvider, @unchecked Sendable {
         }
 
         guard let embedding = await extractor.extractDominantEmbedding(from: samples) else {
-            // Couldn't extract — be conservative: drop this window.
             log("VoiceIsolationGate: extraction returned nil, dropping window")
             rejectedWindowsCount += 1
-            pendingBuffers.removeAll(keepingCapacity: true)
-            consecutiveSilentBuffers = 0
+            await dropPending()
             state = .dropping
             return
         }
 
-        let distance = VoiceEmbeddingExtractor.cosineDistance(embedding, enrolledEmbedding)
-        log("VoiceIsolationGate: window verification distance=\(distance) threshold=\(threshold)")
+        let speechDuration = Float(samples.count) / Float(sampleRate)
+        let outcome = decision.decide(embedding: embedding, speechDuration: speechDuration)
 
-        if distance <= threshold {
+        switch outcome {
+        case .allow(let speakerId, let name):
             verifiedWindowsCount += 1
-            log("VoiceIsolationGate: VERIFIED (✓) — flushing \(pendingBuffers.count) buffered chunks")
-            // Flush every buffered chunk to the inner provider in order.
+            log("VoiceIsolationGate: ALLOW (\(name), id=\(speakerId)) — flushing \(pendingBuffers.count) chunks")
+
+            // Notify listeners about the speaker label *before* flushing audio
+            // so meeting-mode UIs can group the upcoming text correctly.
+            DispatchQueue.main.async { [weak self] in
+                self?.onSpeakerLabel?(name)
+            }
+
             for buf in pendingBuffers {
                 do {
                     try await inner.processAudio(buf)
@@ -211,22 +219,47 @@ final class VoiceIsolationGate: STTProvider, @unchecked Sendable {
             pendingBuffers.removeAll(keepingCapacity: true)
             consecutiveSilentBuffers = 0
             state = .streaming
-        } else {
+
+        case .deny:
             rejectedWindowsCount += 1
-            log("VoiceIsolationGate: REJECTED (✗) — dropping \(pendingBuffers.count) buffered chunks")
-            pendingBuffers.removeAll(keepingCapacity: true)
-            consecutiveSilentBuffers = 0
-            // Reset the inner provider so any partial state from previous utterances
-            // doesn't bleed into the next verified window.
-            await inner.reset()
+            log("VoiceIsolationGate: DENY — dropping \(pendingBuffers.count) chunks")
+            await dropPending()
+            state = .dropping
+
+        case .captureUnknown(let unknownEmbedding):
+            capturedUnknownCount += 1
+            let name = SpeakerRegistry.nextUnknownName()
+            let captured = RegisteredSpeaker(
+                id: UUID().uuidString,
+                name: name,
+                embedding: unknownEmbedding,
+                allowed: false,
+                source: .autoCaptured,
+                createdAt: Date(),
+                updatedAt: Date()
+            )
+            do {
+                try SpeakerRegistry.upsert(captured)
+                log("VoiceIsolationGate: CAPTURED unknown as '\(name)'")
+                DispatchQueue.main.async { [weak self] in
+                    self?.onCapturedUnknown?(captured)
+                }
+            } catch {
+                log("VoiceIsolationGate: failed to persist captured unknown: \(error.localizedDescription)")
+            }
+            await dropPending()
             state = .dropping
         }
     }
 
+    private func dropPending() async {
+        pendingBuffers.removeAll(keepingCapacity: true)
+        consecutiveSilentBuffers = 0
+        await inner.reset()
+    }
+
     // MARK: - Helpers
 
-    /// Cheap RMS-based speech detector. Not a substitute for a real VAD model,
-    /// but adequate to chunk audio into "speech windows" for verification.
     private func bufferIsSpeech(_ buffer: AVAudioPCMBuffer) -> Bool {
         guard let channelData = buffer.floatChannelData else { return false }
         let frameLength = Int(buffer.frameLength)
