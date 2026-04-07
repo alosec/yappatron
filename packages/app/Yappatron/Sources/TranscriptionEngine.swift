@@ -128,9 +128,13 @@ class TranscriptionEngine: ObservableObject {
     var onSpeechEnd: (() -> Void)?
     var onUtteranceComplete: (([Float], String) -> Void)?  // Audio samples + streamed text for refinement
 
-    // STT provider (local or cloud)
+    // STT provider (local or cloud) — may be a VoiceIsolationGate decorating the real provider.
     private var sttProvider: STTProvider?
     private let backend: STTBackend
+
+    /// Shared embedding extractor — held here so the enrollment flow can reuse the
+    /// already-loaded diarizer models instead of paying download/load cost twice.
+    let voiceExtractor = VoiceEmbeddingExtractor()
 
     // Audio capture
     private var audioEngine: AVAudioEngine?
@@ -190,7 +194,34 @@ class TranscriptionEngine: ObservableObject {
             // Create and start the STT provider
             await MainActor.run { status = .downloadingModels }
 
-            let provider = createProvider()
+            let baseProvider = createProvider()
+
+            // Wrap in VoiceIsolationGate if the user has enrolled and isolation is enabled.
+            // The gate is a transparent decorator: when no voiceprint exists or the toggle
+            // is off, this branch is skipped and behavior is identical to before.
+            let provider: STTProvider
+            if VoiceIsolationConfig.enabled, let voiceprint = VoiceprintStore.load() {
+                log("Voice isolation: ENABLED (enrolled='\(voiceprint.name)', threshold=\(VoiceIsolationConfig.threshold))")
+                do {
+                    try await voiceExtractor.loadIfNeeded()
+                    provider = VoiceIsolationGate(
+                        inner: baseProvider,
+                        extractor: voiceExtractor,
+                        voiceprint: voiceprint,
+                        threshold: VoiceIsolationConfig.threshold
+                    )
+                } catch {
+                    log("Voice isolation: failed to load extractor (\(error.localizedDescription)) — falling back to direct provider")
+                    provider = baseProvider
+                }
+            } else {
+                if !VoiceprintStore.hasEnrolledVoiceprint {
+                    log("Voice isolation: no enrolled voiceprint, running without gate")
+                } else {
+                    log("Voice isolation: disabled by user, running without gate")
+                }
+                provider = baseProvider
+            }
 
             // Wire up provider callbacks
             provider.onPartial = { [weak self] partial in

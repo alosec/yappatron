@@ -380,6 +380,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         menu.addItem(NSMenuItem.separator())
 
+        // Voice Isolation submenu
+        let isolationItem = NSMenuItem(title: "Voice Isolation", action: nil, keyEquivalent: "")
+        let isolationMenu = NSMenu()
+
+        let enrolled = VoiceprintStore.hasEnrolledVoiceprint
+        let statusLabel = NSMenuItem(
+            title: enrolled ? "Status: Enrolled ✓" : "Status: Not enrolled",
+            action: nil,
+            keyEquivalent: ""
+        )
+        statusLabel.isEnabled = false
+        isolationMenu.addItem(statusLabel)
+
+        let toggleItem = NSMenuItem(
+            title: "Enabled",
+            action: #selector(toggleVoiceIsolation),
+            keyEquivalent: ""
+        )
+        toggleItem.state = (enrolled && VoiceIsolationConfig.enabled) ? .on : .off
+        toggleItem.isEnabled = enrolled
+        isolationMenu.addItem(toggleItem)
+
+        isolationMenu.addItem(NSMenuItem.separator())
+
+        let enrollTitle = enrolled ? "Re-enroll My Voice…" : "Enroll My Voice…"
+        isolationMenu.addItem(NSMenuItem(title: enrollTitle, action: #selector(enrollVoiceAction), keyEquivalent: ""))
+
+        if enrolled {
+            isolationMenu.addItem(NSMenuItem(title: "Clear Voiceprint", action: #selector(clearVoiceprintAction), keyEquivalent: ""))
+        }
+
+        isolationItem.submenu = isolationMenu
+        menu.addItem(isolationItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // Orb Style submenu
         let orbStyleItem = NSMenuItem(title: "Orb Style", action: nil, keyEquivalent: "")
         let orbStyleMenu = NSMenu()
@@ -580,6 +616,112 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         } else {
             completion?(false)
         }
+    }
+
+    // MARK: - Voice Isolation actions
+
+    private static let enrollmentScript = """
+    The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. \
+    How razorback jumping frogs can level six piqued gymnasts. The five boxing wizards jump \
+    quickly. Sphinx of black quartz, judge my vow. We promptly judged antique ivory buckles \
+    of the next prize.
+    """
+
+    @objc func toggleVoiceIsolation() {
+        VoiceIsolationConfig.enabled.toggle()
+
+        let alert = NSAlert()
+        alert.messageText = "Restart Required"
+        alert.informativeText = "Voice isolation is now \(VoiceIsolationConfig.enabled ? "ON" : "OFF"). Please restart Yappatron for the change to take effect."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    @objc func enrollVoiceAction() {
+        // Walk the user through the script, capture, then report.
+        let intro = NSAlert()
+        intro.messageText = "Enroll Your Voice"
+        intro.informativeText = """
+        Yappatron will record \(Int(SpeakerEnrollmentManager.enrollmentDurationSeconds)) seconds of your voice to learn what you sound like. \
+        After this, only your voice will be transcribed — background voices will be ignored.
+
+        When you click Start, read the paragraph below in your normal speaking voice:
+
+        \(Self.enrollmentScript)
+        """
+        intro.alertStyle = .informational
+        intro.addButton(withTitle: "Start")
+        intro.addButton(withTitle: "Cancel")
+
+        let response = intro.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        // Pause the engine so it doesn't fight the enrollment manager for the mic.
+        let wasListening: Bool = {
+            if case .listening = engine.status { return true }
+            return false
+        }()
+        if wasListening {
+            engine.stopListening()
+        }
+
+        let recordingAlert = NSAlert()
+        recordingAlert.messageText = "Recording…"
+        recordingAlert.informativeText = "Reading the paragraph aloud now. This window will close automatically when recording finishes."
+        recordingAlert.alertStyle = .informational
+
+        // Run the capture concurrently with the modal so the modal closes when capture finishes.
+        let extractor = engine.voiceExtractor
+        let manager = SpeakerEnrollmentManager(extractor: extractor)
+
+        Task { @MainActor in
+            do {
+                let voiceprint = try await manager.enroll()
+                NSApp.stopModal(withCode: .alertFirstButtonReturn)
+                let success = NSAlert()
+                success.messageText = "Enrolled ✓"
+                success.informativeText = "Your voice has been saved. Voice isolation will activate after the next restart."
+                success.alertStyle = .informational
+                success.addButton(withTitle: "OK")
+                success.runModal()
+                NSLog("[Yappatron] Voice enrolled: \(voiceprint.name) (\(voiceprint.embedding.count)-dim)")
+            } catch {
+                NSApp.stopModal(withCode: .alertSecondButtonReturn)
+                let failure = NSAlert()
+                failure.messageText = "Enrollment Failed"
+                failure.informativeText = "Could not enroll voice: \(error.localizedDescription)"
+                failure.alertStyle = .warning
+                failure.addButton(withTitle: "OK")
+                failure.runModal()
+            }
+
+            if wasListening {
+                engine.startListening()
+            }
+        }
+
+        // Block UI until the Task above stops the modal.
+        NSApp.runModal(for: recordingAlert.window)
+    }
+
+    @objc func clearVoiceprintAction() {
+        let confirm = NSAlert()
+        confirm.messageText = "Clear Voiceprint?"
+        confirm.informativeText = "This will remove your enrolled voice. Voice isolation will be disabled until you re-enroll."
+        confirm.alertStyle = .warning
+        confirm.addButton(withTitle: "Clear")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+
+        VoiceprintStore.delete()
+
+        let done = NSAlert()
+        done.messageText = "Voiceprint Cleared"
+        done.informativeText = "Restart Yappatron for the change to take effect."
+        done.alertStyle = .informational
+        done.addButton(withTitle: "OK")
+        done.runModal()
     }
 
     @objc func selectOrbStyle(_ sender: NSMenuItem) {
