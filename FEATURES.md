@@ -4,7 +4,7 @@
 
 ## Overview
 
-Yappatron is an always-on voice dictation app for macOS with swappable cloud and local STT backends. No push-to-talk—just speak and it types.
+Yappatron is a voice dictation app for macOS with swappable cloud and local STT backends. Use always-on listening by default, or switch to configurable push-to-talk when you want tighter control.
 
 ## Core Features
 
@@ -85,6 +85,10 @@ Only available when using Local (Parakeet) backend — cloud backends already re
 
 ### ⚡ Hands-Free Operation
 
+**Dictation Modes:**
+- **Always On**: Default mode — speak naturally and Yappatron types when an utterance completes
+- **Push to Talk**: Hold a configurable global shortcut while speaking; release to finalize the utterance
+
 **Auto-Send with Enter** (Optional):
 - **Enabled**: Automatically presses Enter after each utterance
 - **Perfect for**: Claude Code, ChatGPT, terminal commands
@@ -109,6 +113,8 @@ Only available when using Local (Parakeet) backend — cloud backends already re
 Right-click the orb to access:
 - Status display with current backend indicator
 - Pause / Resume
+- **Dictation Mode** submenu - Switch between Always On / Push to Talk
+- **Configure Push-to-Talk Shortcut...** - Choose the global shortcut to hold while dictating
 - ✓ Press Enter After Speech - Toggle hands-free operation
 - ✓ Dual-Pass Refinement (local mode only) - Toggle enhanced accuracy
 - **STT Backend** submenu - Switch between Deepgram / Local (Parakeet)

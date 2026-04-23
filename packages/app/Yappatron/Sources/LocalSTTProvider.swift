@@ -41,6 +41,10 @@ class LocalSTTProvider: STTProvider {
         _ = try await streamingManager?.process(audioBuffer: buffer)
     }
 
+    func finishCurrentUtterance() async throws -> String? {
+        return try await streamingManager?.finish()
+    }
+
     func finish() async throws -> String? {
         return try await streamingManager?.finish()
     }

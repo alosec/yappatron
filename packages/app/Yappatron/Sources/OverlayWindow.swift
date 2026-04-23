@@ -49,7 +49,7 @@ class OverlayViewModel: ObservableObject {
     @Published var orbStyle: OrbStyle = .voronoi
 
     enum StatusType: Equatable {
-        case idle
+        case idle // Paused or push-to-talk idle
         case initializing
         case downloading(Double)
         case listening
@@ -102,11 +102,11 @@ struct OverlayView: View {
                 Color(red: 0.2, green: 1.0, blue: 0.5)
             ]
         case .idle:
-            // Dim RGB when idle
+            // Dim neutral glow when paused or waiting for push-to-talk
             return [
-                Color(red: 0.3, green: 0.3, blue: 0.5),
-                Color(red: 0.4, green: 0.3, blue: 0.4),
-                Color(red: 0.3, green: 0.4, blue: 0.4)
+                Color(red: 0.28, green: 0.32, blue: 0.36),
+                Color(red: 0.38, green: 0.36, blue: 0.42),
+                Color(red: 0.24, green: 0.38, blue: 0.42)
             ]
         case .error:
             // Red warning

@@ -1,6 +1,6 @@
 # Yappatron
 
-Open-source always-on voice dictation for macOS. No hotkeys, no toggles—just yap.
+Open-source voice dictation for macOS. Use always-on listening or configurable push-to-talk.
 
 ## What is this?
 
@@ -12,16 +12,16 @@ Yappatron is a voice dictation app that:
 - **✨ Dual-pass refinement** — Optional enhanced accuracy for local mode
 - **🎨 Beautiful visualizations** — Psychedelic orb animations respond to your voice
 - **⚡ Hands-free operation** — Optional auto-send for AI assistants and command-line tools
-- **🚫 No push-to-talk** — Always listening, semantically aware of when you're done speaking
+- **🎙️ Dictation modes** — Always-on listening by default, with configurable push-to-talk for noisy spaces
 
 ## Why?
 
-Current dictation apps require:
-- Push-to-talk or toggle hotkeys
+Current dictation apps often force:
 - Clunky UX
+- Rigid hotkey workflows
 - Closed source "trust us" privacy
 
-Yappatron just works. Speak and it types. That's it.
+Yappatron keeps the simple always-on flow, and lets you switch to push-to-talk when the room gets messy.
 
 ## Quick Start
 

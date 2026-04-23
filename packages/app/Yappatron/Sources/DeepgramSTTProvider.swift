@@ -17,6 +17,8 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     private var lastInterimText = ""       // Last interim shown (for safe replacement)
     private var lastEmittedPartial = ""    // Last text sent to onPartial (for append-only check)
     private var eouTimer: Task<Void, Never>?
+    private var finalizeContinuation: CheckedContinuation<String?, Never>?
+    private var finalizeTimeoutTask: Task<Void, Never>?
     private let eouDebounceMs: UInt64 = 3500
 
     var onPartial: ((String) -> Void)?
@@ -104,6 +106,35 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         try await ws.send(message)
     }
 
+    func finishCurrentUtterance() async throws -> String? {
+        guard isConnected, let ws = webSocketTask else {
+            return takePendingUtterance()
+        }
+
+        eouTimer?.cancel()
+        eouTimer = nil
+
+        return await withCheckedContinuation { continuation in
+            finalizeContinuation?.resume(returning: takePendingUtterance())
+            finalizeContinuation = continuation
+
+            finalizeTimeoutTask?.cancel()
+            finalizeTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                self?.completeFinalize()
+            }
+
+            Task { [weak self] in
+                do {
+                    try await ws.send(.string("{\"type\":\"Finalize\"}"))
+                } catch {
+                    log("DeepgramSTTProvider: Finalize send failed: \(error.localizedDescription)")
+                    self?.completeFinalize()
+                }
+            }
+        }
+    }
+
     func finish() async throws -> String? {
         guard isConnected, let ws = webSocketTask else { return nil }
 
@@ -122,6 +153,10 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         lastEmittedPartial = ""
         eouTimer?.cancel()
         eouTimer = nil
+        finalizeTimeoutTask?.cancel()
+        finalizeTimeoutTask = nil
+        finalizeContinuation?.resume(returning: nil)
+        finalizeContinuation = nil
     }
 
     func cleanup() {
@@ -129,6 +164,9 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         receiveTask?.cancel()
         keepAliveTask?.cancel()
         eouTimer?.cancel()
+        finalizeTimeoutTask?.cancel()
+        finalizeContinuation?.resume(returning: nil)
+        finalizeContinuation = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         session?.invalidateAndCancel()
@@ -216,7 +254,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         }
 
         let isFinal = json["is_final"] as? Bool ?? false
-        let speechFinal = json["speech_final"] as? Bool ?? false
+        let fromFinalize = json["from_finalize"] as? Bool ?? false
 
         guard !transcript.isEmpty else { return }
 
@@ -246,7 +284,11 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
                     self?.onLockedTextAdvanced?(lockedLen)
                     self?.onPartial?(partial)
                 }
-                scheduleEOUTimer()
+                if fromFinalize || finalizeContinuation != nil {
+                    completeFinalize()
+                } else {
+                    scheduleEOUTimer()
+                }
             }
         } else {
             // Send interims for speech detection (orb) — app uses lockedTextLength
@@ -267,6 +309,11 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         eouTimer?.cancel()
 
         log("DeepgramSTTProvider: UtteranceEnd: '\(utterance)'")
+        if finalizeContinuation != nil {
+            completeFinalize(with: utterance)
+            return
+        }
+
         DispatchQueue.main.async { [weak self] in
             self?.onFinal?(utterance)
         }
@@ -286,6 +333,34 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             DispatchQueue.main.async { [weak self] in
                 self?.onFinal?(utterance)
             }
+        }
+    }
+
+    private func takePendingUtterance() -> String? {
+        let pending = currentUtterance
+        currentUtterance = ""
+        lastInterimText = ""
+        lastEmittedPartial = ""
+        eouTimer?.cancel()
+        eouTimer = nil
+        return pending.isEmpty ? nil : pending
+    }
+
+    private func completeFinalize(with utterance: String? = nil) {
+        finalizeTimeoutTask?.cancel()
+        finalizeTimeoutTask = nil
+
+        guard let continuation = finalizeContinuation else { return }
+        finalizeContinuation = nil
+
+        if let utterance = utterance {
+            lastInterimText = ""
+            lastEmittedPartial = ""
+            eouTimer?.cancel()
+            eouTimer = nil
+            continuation.resume(returning: utterance.isEmpty ? nil : utterance)
+        } else {
+            continuation.resume(returning: takePendingUtterance())
         }
     }
 }

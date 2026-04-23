@@ -32,9 +32,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // Hotkeys
     var togglePauseHotKey: HotKey?
     var toggleOverlayHotKey: HotKey?
+    var pushToTalkHotKey: HotKey?
+    var pushToTalkLocalMonitor: Any?
+    var pushToTalkGlobalMonitor: Any?
 
     // State
     @Published var isPaused = false
+    @Published var isPushToTalkHeld = false
     @Published var currentTypedText = "" // What we've typed so far (for backspace corrections)
     var lockedTextLength = 0             // Characters confirmed by is_final (never backspace into these)
 
@@ -47,6 +51,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var enableDualPassRefinement: Bool {
         get { UserDefaults.standard.bool(forKey: "enableDualPassRefinement") }
         set { UserDefaults.standard.set(newValue, forKey: "enableDualPassRefinement") }
+    }
+
+    var dictationMode: DictationMode {
+        get { DictationMode.current }
+        set { DictationMode.current = newValue }
     }
 
     // Combine
@@ -93,6 +102,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupHotKeys()
         setupEngineCallbacks()
         observeEngineStatus()
+        observeHotKeyPreferences()
 
         // Initialize batch processor in background (if enabled)
         if let batchProcessor = batchProcessor {
@@ -111,7 +121,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         await engine.start()
 
         if case .ready = engine.status {
-            engine.startListening()
+            applyDictationModeAfterEngineReady()
         }
     }
 
@@ -166,7 +176,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         engine.onSpeechEnd = { [weak self] in
             Task { @MainActor in
-                self?.overlayWindow?.overlayViewModel.status = .listening
+                self?.updateOverlayStatus()
                 self?.overlayWindow?.overlayViewModel.isSpeaking = false
                 self?.updateStatusIcon()
 
@@ -185,6 +195,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             .sink { [weak self] _ in
                 self?.updateOverlayStatus()
                 self?.updateStatusIcon()
+            }
+            .store(in: &cancellables)
+    }
+
+    func observeHotKeyPreferences() {
+        NotificationCenter.default.publisher(for: .pushToTalkHotKeyDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.registerPushToTalkHotKey()
             }
             .store(in: &cancellables)
     }
@@ -279,7 +298,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         case .downloadingModels:
             overlayWindow?.overlayViewModel.status = .downloading(0.5) // Indeterminate
         case .ready:
-            overlayWindow?.overlayViewModel.status = .listening
+            overlayWindow?.overlayViewModel.status = (isPaused || dictationMode == .pushToTalk) ? .idle : .listening
         case .listening:
             overlayWindow?.overlayViewModel.status = .listening
         case .error(let msg):
@@ -318,7 +337,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         switch engine.status {
         case .initializing: statusText = "⏳ Initializing..."
         case .downloadingModels: statusText = "⬇️ Downloading..."
-        case .ready, .listening: statusText = isPaused ? "⏸ Paused" : "🎙 Listening"
+        case .ready, .listening:
+            if isPaused {
+                statusText = "⏸ Paused"
+            } else if dictationMode == .pushToTalk && engine.status == .ready {
+                statusText = "🎙 Push-to-Talk Idle"
+            } else if dictationMode == .pushToTalk {
+                statusText = "🎙 Push-to-Talk Listening"
+            } else {
+                statusText = "🎙 Listening"
+            }
         case .error(let msg): statusText = "❌ \(msg)"
         }
 
@@ -338,6 +366,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         } else {
             menu.addItem(NSMenuItem(title: "Pause", action: #selector(pauseAction), keyEquivalent: ""))
         }
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Dictation Mode submenu
+        let modeItem = NSMenuItem(title: "Dictation Mode", action: nil, keyEquivalent: "")
+        let modeMenu = NSMenu()
+
+        for mode in DictationMode.allCases {
+            let item = NSMenuItem(title: mode.title, action: #selector(selectDictationMode(_:)), keyEquivalent: "")
+            item.representedObject = mode.rawValue
+            item.state = (mode == dictationMode) ? .on : .off
+            modeMenu.addItem(item)
+        }
+
+        modeMenu.addItem(NSMenuItem.separator())
+
+        let shortcutTitle = "Configure Push-to-Talk Shortcut... (\(HotKeyPreferences.displayString(for: HotKeyPreferences.pushToTalkCombo)))"
+        modeMenu.addItem(NSMenuItem(title: shortcutTitle, action: #selector(configurePushToTalkShortcut), keyEquivalent: ""))
+
+        modeItem.submenu = modeMenu
+        menu.addItem(modeItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -483,19 +532,137 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 self?.toggleOverlay()
             }
         }
+
+        registerPushToTalkHotKey()
+    }
+
+    func registerPushToTalkHotKey() {
+        unregisterPushToTalkInput()
+
+        guard dictationMode == .pushToTalk else { return }
+
+        let combo = HotKeyPreferences.pushToTalkCombo
+
+        if HotKeyPreferences.isModifierOnly(combo) {
+            registerPushToTalkModifierMonitor(combo: combo)
+            return
+        }
+
+        pushToTalkHotKey = HotKey(keyCombo: combo)
+        pushToTalkHotKey?.keyDownHandler = { [weak self] in
+            Task { @MainActor in
+                self?.beginPushToTalkCapture()
+            }
+        }
+        pushToTalkHotKey?.keyUpHandler = { [weak self] in
+            Task { @MainActor in
+                await self?.endPushToTalkCapture()
+            }
+        }
+    }
+
+    func unregisterPushToTalkInput() {
+        pushToTalkHotKey = nil
+
+        if let pushToTalkLocalMonitor = pushToTalkLocalMonitor {
+            NSEvent.removeMonitor(pushToTalkLocalMonitor)
+            self.pushToTalkLocalMonitor = nil
+        }
+
+        if let pushToTalkGlobalMonitor = pushToTalkGlobalMonitor {
+            NSEvent.removeMonitor(pushToTalkGlobalMonitor)
+            self.pushToTalkGlobalMonitor = nil
+        }
+    }
+
+    func registerPushToTalkModifierMonitor(combo: KeyCombo) {
+        pushToTalkLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            Task { @MainActor in
+                self?.handlePushToTalkModifierEvent(event, combo: combo)
+            }
+            return event
+        }
+
+        pushToTalkGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            Task { @MainActor in
+                self?.handlePushToTalkModifierEvent(event, combo: combo)
+            }
+        }
+    }
+
+    func handlePushToTalkModifierEvent(_ event: NSEvent, combo: KeyCombo) {
+        guard dictationMode == .pushToTalk,
+              let isPressed = HotKeyPreferences.modifierPressedState(for: event, combo: combo) else {
+            return
+        }
+
+        if isPressed {
+            beginPushToTalkCapture()
+        } else {
+            Task {
+                await endPushToTalkCapture()
+            }
+        }
+    }
+
+    func applyDictationModeAfterEngineReady() {
+        guard !isPaused else {
+            updateOverlayStatus()
+            updateStatusIcon()
+            return
+        }
+
+        switch dictationMode {
+        case .alwaysOn:
+            engine.startCapture()
+        case .pushToTalk:
+            engine.stopCapture()
+        }
+
+        updateOverlayStatus()
+        updateStatusIcon()
+    }
+
+    func beginPushToTalkCapture() {
+        guard dictationMode == .pushToTalk, !isPaused, !isPushToTalkHeld else { return }
+
+        isPushToTalkHeld = true
+        engine.startCapture()
+        updateOverlayStatus()
+        updateStatusIcon()
+        showOverlay()
+    }
+
+    func endPushToTalkCapture() async {
+        guard dictationMode == .pushToTalk, isPushToTalkHeld else { return }
+
+        isPushToTalkHeld = false
+        engine.stopCapture()
+        updateOverlayStatus()
+        updateStatusIcon()
+
+        await engine.finishCurrentUtterance()
+
+        updateOverlayStatus()
+        updateStatusIcon()
     }
 
     // MARK: - Actions
 
     @objc func pauseAction() {
         isPaused = true
-        engine.stopListening()
+        isPushToTalkHeld = false
+        engine.stopCapture()
+        Task {
+            await engine.finishCurrentUtterance()
+        }
+        updateOverlayStatus()
         updateStatusIcon()
     }
 
     @objc func resumeAction() {
         isPaused = false
-        engine.startListening()
+        applyDictationModeAfterEngineReady()
         updateStatusIcon()
     }
 
@@ -513,6 +680,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    @objc func selectDictationMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let mode = DictationMode(rawValue: rawValue) else { return }
+
+        switchDictationMode(to: mode)
+    }
+
+    private func switchDictationMode(to mode: DictationMode) {
+        guard mode != dictationMode else { return }
+
+        dictationMode = mode
+        isPushToTalkHeld = false
+
+        switch mode {
+        case .alwaysOn:
+            if !isPaused {
+                engine.startCapture()
+            }
+        case .pushToTalk:
+            engine.stopCapture()
+            Task {
+                await engine.finishCurrentUtterance()
+            }
+        }
+
+        registerPushToTalkHotKey()
+        updateOverlayStatus()
+        updateStatusIcon()
+    }
+
+    @objc func configurePushToTalkShortcut() {
+        let currentCombo = HotKeyPreferences.pushToTalkCombo
+        guard let combo = ShortcutRecorderDialog.runModal(currentCombo: currentCombo) else { return }
+
+        if let message = HotKeyPreferences.validationMessage(for: combo) {
+            let alert = NSAlert()
+            alert.messageText = "Shortcut Not Available"
+            alert.informativeText = message
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        HotKeyPreferences.pushToTalkCombo = combo
+        registerPushToTalkHotKey()
     }
 
     @objc func selectBackend(_ sender: NSMenuItem) {
@@ -602,6 +817,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     @objc func quitAction() {
+        unregisterPushToTalkInput()
         engine.cleanup()
         NSApp.terminate(nil)
     }
@@ -610,6 +826,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 // MARK: - Settings View
 
 struct SettingsView: View {
+    @State private var pushToTalkShortcut = HotKeyPreferences.displayString(for: HotKeyPreferences.pushToTalkCombo)
+
     var body: some View {
         Form {
             Section("About") {
@@ -622,6 +840,20 @@ struct SettingsView: View {
             Section("Shortcuts") {
                 LabeledContent("Toggle Pause", value: "⌘ Escape")
                 LabeledContent("Toggle Indicator", value: "⌥ Space")
+                LabeledContent("Push to Talk", value: pushToTalkShortcut)
+                Button("Configure Push-to-Talk Shortcut...") {
+                    let currentCombo = HotKeyPreferences.pushToTalkCombo
+                    guard let combo = ShortcutRecorderDialog.runModal(currentCombo: currentCombo) else { return }
+                    HotKeyPreferences.pushToTalkCombo = combo
+                    pushToTalkShortcut = HotKeyPreferences.displayString(for: combo)
+                }
+            }
+
+            Section("Dictation") {
+                LabeledContent("Mode", value: DictationMode.current.title)
+                Text("Change mode via the menu bar right-click menu")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
             }
 
             Section("STT Backend") {
@@ -632,6 +864,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 350, height: 250)
+        .frame(width: 390, height: 360)
     }
 }

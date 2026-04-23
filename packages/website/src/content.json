@@ -1,7 +1,7 @@
 {
   "name": "yappatron",
   "tagline": "just yap.",
-  "description": "always-on voice dictation for mac. no hotkeys. no toggles. just talk.",
+  "description": "voice dictation for mac with always-on listening and configurable push-to-talk.",
   "badges": [
     { "label": "macOS", "icon": "apple" },
     { "label": "cloud + local", "icon": "shield" },

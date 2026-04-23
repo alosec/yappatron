@@ -56,6 +56,22 @@ actor AudioBufferQueue {
     }
 }
 
+actor AudioProcessingState {
+    private var inFlightCount = 0
+
+    func beginBuffer() {
+        inFlightCount += 1
+    }
+
+    func finishBuffer() {
+        inFlightCount = max(0, inFlightCount - 1)
+    }
+
+    func count() -> Int {
+        return inFlightCount
+    }
+}
+
 /// Stores audio chunks for current utterance to enable batch re-processing
 actor AudioChunkBuffer {
     private var currentUtteranceBuffers: [AVAudioPCMBuffer] = []
@@ -141,10 +157,12 @@ class TranscriptionEngine: ObservableObject {
 
     // Audio buffer queue - prevents race conditions without blocking audio thread
     private let audioBufferQueue = AudioBufferQueue()
+    private let audioProcessingState = AudioProcessingState()
     private var processingTask: Task<Void, Never>?
 
     // Audio chunk buffer for batch re-processing (will be initialized after audio format is known)
     private var audioChunkBuffer: AudioChunkBuffer?
+    private var isFinishingUtterance = false
 
     init(backend: STTBackend = .current) {
         self.backend = backend
@@ -306,7 +324,7 @@ class TranscriptionEngine: ObservableObject {
         }
     }
 
-    func startListening() {
+    func startCapture() {
         switch status {
         case .ready, .listening:
             break
@@ -325,22 +343,47 @@ class TranscriptionEngine: ObservableObject {
         }
     }
 
-    func stopListening() {
+    func stopCapture() {
         audioEngine?.stop()
         status = .ready
+        log("Listening stopped")
+    }
 
-        // Finish any pending transcription
-        Task {
-            if let provider = sttProvider {
-                let final = try? await provider.finish()
-                if let text = final, !text.isEmpty {
-                    handleFinalTranscription(text)
+    func finishCurrentUtterance() async {
+        guard !isFinishingUtterance else { return }
+        isFinishingUtterance = true
+        defer { isFinishingUtterance = false }
+
+        await drainAudioQueue()
+
+        guard let provider = sttProvider else { return }
+
+        let final = try? await provider.finishCurrentUtterance()
+        if let text = final, !text.isEmpty {
+            handleFinalTranscription(text)
+        } else {
+            await audioChunkBuffer?.clear()
+            await provider.reset()
+
+            if isSpeaking {
+                DispatchQueue.main.async { [weak self] in
+                    log("isSpeaking: true → false (speech ended)")
+                    self?.isSpeaking = false
+                    self?.onSpeechEnd?()
                 }
-                await provider.reset()
             }
         }
+    }
 
-        log("Listening stopped")
+    func startListening() {
+        startCapture()
+    }
+
+    func stopListening() {
+        stopCapture()
+        Task {
+            await finishCurrentUtterance()
+        }
     }
 
     private func setupAudioCapture() throws -> AVAudioFormat {
@@ -423,6 +466,8 @@ class TranscriptionEngine: ObservableObject {
             while !Task.isCancelled {
                 // Dequeue and process buffers serially
                 if let buffer = await self.audioBufferQueue.dequeue() {
+                    await self.audioProcessingState.beginBuffer()
+
                     do {
                         try await self.sttProvider?.processAudio(buffer)
 
@@ -433,6 +478,8 @@ class TranscriptionEngine: ObservableObject {
                     } catch {
                         log("STT process error: \(error.localizedDescription)")
                     }
+
+                    await self.audioProcessingState.finishBuffer()
                 } else {
                     // No buffers available, wait a bit
                     try? await Task.sleep(nanoseconds: 1_000_000) // 1ms
@@ -449,8 +496,29 @@ class TranscriptionEngine: ObservableObject {
         }
     }
 
+    private func drainAudioQueue(timeoutNanoseconds: UInt64 = 400_000_000) async {
+        let start = DispatchTime.now().uptimeNanoseconds
+
+        while true {
+            let queuedBufferCount = await audioBufferQueue.count()
+            let inFlightBufferCount = await audioProcessingState.count()
+            if queuedBufferCount == 0 && inFlightBufferCount == 0 {
+                break
+            }
+
+            if DispatchTime.now().uptimeNanoseconds - start >= timeoutNanoseconds {
+                log("Audio queue drain timed out")
+                break
+            }
+
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+
     func cleanup() {
-        stopListening()
+        stopCapture()
         stopAudioProcessing()
         inputNode?.removeTap(onBus: 0)
         audioEngine = nil

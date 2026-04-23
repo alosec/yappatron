@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Always-on voice dictation for macOS. No push-to-talk. Just yap.
+Voice dictation for macOS. Always-on by default, with optional push-to-talk for noisy environments.
 
 ## Architecture (Non-Negotiable)
 

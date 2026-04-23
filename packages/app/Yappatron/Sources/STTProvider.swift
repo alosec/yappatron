@@ -9,6 +9,9 @@ protocol STTProvider: AnyObject {
     /// Process a 16kHz mono PCM audio buffer
     func processAudio(_ buffer: AVAudioPCMBuffer) async throws
 
+    /// Flush and return the current utterance while keeping the provider ready for more audio
+    func finishCurrentUtterance() async throws -> String?
+
     /// Signal end of audio stream and get any remaining text
     func finish() async throws -> String?
 
