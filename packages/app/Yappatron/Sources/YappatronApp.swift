@@ -242,7 +242,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         // Check if input is focused
         guard InputSimulator.isTextInputFocused() else {
-            NSLog("[Yappatron] No text input focused, ignoring transcription")
+            InputSimulator.logTextInputFocusRejection()
             return
         }
 

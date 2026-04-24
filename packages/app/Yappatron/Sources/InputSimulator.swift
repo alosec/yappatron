@@ -5,6 +5,17 @@ import Carbon.HIToolbox
 /// Simulates keyboard input with support for backspace corrections
 class InputSimulator {
 
+    private struct FocusedElementContext {
+        let lookupResult: AXError
+        let role: String?
+        let subrole: String?
+
+        var isStandardTextInput: Bool {
+            guard let role else { return false }
+            return standardTextInputRoles.contains(role)
+        }
+    }
+
     private struct PasteboardSnapshot {
         let items: [[NSPasteboard.PasteboardType: Data]]
 
@@ -156,28 +167,69 @@ class InputSimulator {
     }
     
     // MARK: - Context Detection
+
+    private static let standardTextInputRoles: Set<String> = [
+        kAXTextFieldRole as String,
+        kAXTextAreaRole as String,
+        kAXComboBoxRole as String,
+        "AXSearchField"
+    ]
+
+    private static let pasteFallbackBundleIDs: Set<String> = [
+        // Code editors and terminals often expose canvas/web surfaces rather than AX text roles.
+        "com.microsoft.VSCode",
+        "com.microsoft.VSCodeInsiders",
+        "com.visualstudio.code.oss",
+        "com.todesktop.230313mzl4w4u92",
+        "com.exafunction.windsurf",
+
+        // Electron/web chat apps can report the focused element as HTML content while
+        // the actual composer is an editable descendant.
+        "com.tinyspeck.slackmacgap",
+        "com.openai.codex",
+        "com.openai.chat",
+        "com.anthropic.claudefordesktop",
+        "org.whispersystems.signal-desktop"
+    ]
     
     static func isTextInputFocused() -> Bool {
-        if isStandardTextInputFocused() {
+        let context = focusedElementContext()
+        if context.isStandardTextInput {
             return true
         }
 
-        return frontmostAppUsesTerminalInputFallback()
+        return frontmostAppUsesPasteFallback()
     }
 
     static func shouldPasteTextInsteadOfTyping() -> Bool {
-        guard frontmostAppUsesTerminalInputFallback() else {
+        guard frontmostAppUsesPasteFallback() else {
             return false
         }
 
-        return !isStandardTextInputFocused()
+        return !focusedElementContext().isStandardTextInput
     }
 
     static func getFocusedAppName() -> String? {
         return NSWorkspace.shared.frontmostApplication?.localizedName
     }
 
+    static func logTextInputFocusRejection() {
+        let context = focusedElementContext()
+        let app = NSWorkspace.shared.frontmostApplication
+        let appName = app?.localizedName ?? "unknown"
+        let bundleID = app?.bundleIdentifier ?? "unknown"
+        let lookupResult = String(describing: context.lookupResult)
+        let role = context.role ?? "nil"
+        let subrole = context.subrole ?? "nil"
+
+        NSLog("[Yappatron] No text input focused: app=\(appName), bundleID=\(bundleID), focusedResult=\(lookupResult), role=\(role), subrole=\(subrole)")
+    }
+
     private static func isStandardTextInputFocused() -> Bool {
+        return focusedElementContext().isStandardTextInput
+    }
+
+    private static func focusedElementContext() -> FocusedElementContext {
         let systemWide = AXUIElementCreateSystemWide()
         
         var focusedElement: AnyObject?
@@ -188,43 +240,33 @@ class InputSimulator {
         )
         
         guard result == .success, let element = focusedElement else {
-            return false
+            return FocusedElementContext(lookupResult: result, role: nil, subrole: nil)
         }
-        
-        var role: AnyObject?
-        let roleResult = AXUIElementCopyAttributeValue(
-            element as! AXUIElement,
-            kAXRoleAttribute as CFString,
-            &role
-        )
-        
-        guard roleResult == .success, let roleString = role as? String else {
-            return false
-        }
-        
-        let textRoles = [
-            kAXTextFieldRole as String,
-            kAXTextAreaRole as String,
-            kAXComboBoxRole as String,
-            "AXSearchField"
-        ]
-        
-        return textRoles.contains(roleString)
+
+        let axElement = element as! AXUIElement
+        let role = stringAttribute(kAXRoleAttribute as CFString, from: axElement)
+        let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: axElement)
+
+        return FocusedElementContext(lookupResult: result, role: role, subrole: subrole)
     }
 
-    private static func frontmostAppUsesTerminalInputFallback() -> Bool {
+    private static func stringAttribute(_ attribute: CFString, from element: AXUIElement) -> String? {
+        var value: AnyObject?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard result == .success else {
+            return nil
+        }
+
+        return value as? String
+    }
+
+    private static func frontmostAppUsesPasteFallback() -> Bool {
         guard let app = NSWorkspace.shared.frontmostApplication,
               let bundleID = app.bundleIdentifier else {
             return false
         }
 
-        return [
-            "com.microsoft.VSCode",
-            "com.microsoft.VSCodeInsiders",
-            "com.visualstudio.code.oss",
-            "com.todesktop.230313mzl4w4u92",
-            "com.exafunction.windsurf"
-        ].contains(bundleID)
+        return pasteFallbackBundleIDs.contains(bundleID)
     }
 }
 
