@@ -52,7 +52,7 @@ In Xcode:
 3. Add the App Groups capability to both targets.
 4. Register and enable `group.com.yappatron.shared`.
 5. Run `YappatronIOS` on an iPhone.
-6. On iPhone, enable the keyboard in Settings > General > Keyboard > Keyboards.
+6. On iPhone, enable the keyboard in Settings > General > Keyboard > Keyboards, then turn on Allow Full Access for Yappatron Keyboard.
 
 ## TestFlight
 

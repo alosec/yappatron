@@ -27,7 +27,7 @@ final class AudioCaptureManager {
 
     func requestPermission() async -> Bool {
         await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+            AVAudioApplication.requestRecordPermission { granted in
                 continuation.resume(returning: granted)
             }
         }
@@ -42,7 +42,7 @@ final class AudioCaptureManager {
         try session.setCategory(
             .playAndRecord,
             mode: .measurement,
-            options: [.allowBluetooth, .duckOthers]
+            options: [.allowBluetoothHFP, .duckOthers]
         )
         try session.setPreferredSampleRate(16_000)
         try session.setActive(true)
