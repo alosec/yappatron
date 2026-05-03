@@ -4,15 +4,15 @@
 
 ## Current Focus
 
-**TOP PRIORITY: Make the installed iPhone app actually transcribe locally**
+**TOP PRIORITY: Test the installed iPhone app's local transcription path**
 
-The iPhone app is now installed and launched on a connected test iPhone via free Xcode Personal Team signing. The next product question is whether to spike local/on-device ASR on iOS instead of requiring a Deepgram API key for first-run testing.
+The iPhone app is now installed and launched on a connected test iPhone via free Xcode Personal Team signing. It now has a Local mode that uses Apple's on-device Speech framework, so first-run testing no longer requires a Deepgram API key.
 
 ## Current State
 
 Mac app: Deepgram Nova-3 cloud STT is live and working well. Text streams in as clean sentence-level chunks during speech (is_final segments only — no backspacing). Orb animates from interims. EOU timing tuned to endpointing=2750ms server-side, 3500ms local fallback.
 
-iPhone app: Native iOS project exists at `packages/ios/YappatronIOS`, with app target `YappatronIOS` and keyboard extension target `YappatronKeyboard`. It installs and launches on a physical iPhone. Current iOS transcription backend is Deepgram, but the immediate next spike is local/on-device ASR so first-run testing does not require getting an API key.
+iPhone app: Native iOS project exists at `packages/ios/YappatronIOS`, with app target `YappatronIOS` and keyboard extension target `YappatronKeyboard`. It installs and launches on a physical iPhone. Current iOS transcription backends are Local (Apple on-device Speech, default) and Deepgram (optional).
 
 ### Key UX Features
 - **☁️ Deepgram Nova-3 cloud STT**: Punctuation, smart formatting, sentence-level streaming
@@ -25,6 +25,7 @@ iPhone app: Native iOS project exists at `packages/ios/YappatronIOS`, with app t
 
 ### iPhone UX / Architecture
 - **Native SwiftUI iPhone app**: API key field, record/stop, transcript view, copy/share
+- **Local mode default**: Uses Apple on-device Speech recognition; no Deepgram key required for first test
 - **Custom keyboard extension**: Inserts latest transcript into active iOS text field with `textDocumentProxy.insertText`
 - **Free-device bridge**: Yappatron-tagged `UIPasteboard` item instead of App Group, to avoid paid App Group provisioning
 - **Background audio mode**: Declared for the companion-app recording workflow, subject to iOS suspension behavior
@@ -40,6 +41,7 @@ iPhone app: Native iOS project exists at `packages/ios/YappatronIOS`, with app t
 - ✅ Orb animations: Voronoi Cells (default) + Concentric Rings
 - ✅ Dual-pass refinement: Optional toggle for local mode
 - ✅ **iPhone app installed and launched** — Free Personal Team, Developer Mode enabled, profile trusted
+- ✅ **Local iOS transcription mode implemented** — Apple on-device Speech framework, Local default, Deepgram optional
 - ✅ **iOS keyboard extension scaffold** — Pasteboard bridge for type-anywhere insertion
 - ✅ **Public repo hygiene** — No Apple team ID, device ID, Deepgram key, or App Group entitlement committed
 
@@ -48,12 +50,12 @@ iPhone app: Native iOS project exists at `packages/ios/YappatronIOS`, with app t
 
 ## Next Priority
 
-### iPhone Local ASR Spike
-Evaluate whether the existing local stack can run on-device in the iOS app:
-- Reuse FluidAudio/Parakeet if it supports iOS/Core ML cleanly
-- Verify model download/bundling strategy, app size, memory, and latency on physical iPhone hardware
-- Add a local backend toggle or default local path so the iPhone app can be tested without Deepgram
-- Preserve Deepgram as optional cloud backend later
+### iPhone Local ASR Test
+Validate the newly implemented Local mode on device:
+- Grant microphone and speech recognition permissions when prompted
+- Record on iPhone and confirm transcript appears without a Deepgram key
+- If Apple Speech quality/latency is not good enough, evaluate FluidAudio/Parakeet iOS/Core ML integration next
+- Preserve Deepgram as optional cloud backend
 
 ### Other Backlog
 - [ ] Enable the Yappatron keyboard on iPhone and test pasteboard insertion in another app

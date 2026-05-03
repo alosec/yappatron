@@ -7,7 +7,10 @@ struct ContentView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    apiKeySection
+                    backendSection
+                    if viewModel.usesDeepgram {
+                        apiKeySection
+                    }
                     recorderSection
                     transcriptSection
                     keyboardSection
@@ -24,6 +27,21 @@ struct ContentView: View {
                     .disabled(!viewModel.canShareTranscript)
                 }
             }
+        }
+    }
+
+    private var backendSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Mode")
+                .font(.headline)
+
+            Picker("Mode", selection: $viewModel.backend) {
+                ForEach(DictationBackend.allCases) { backend in
+                    Text(backend.label).tag(backend)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(viewModel.isRecording)
         }
     }
 

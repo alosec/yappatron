@@ -1,6 +1,22 @@
 import Foundation
 import UIKit
 
+enum DictationBackend: String, CaseIterable, Identifiable {
+    case local
+    case deepgram
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .local:
+            return "Local"
+        case .deepgram:
+            return "Deepgram"
+        }
+    }
+}
+
 @MainActor
 final class DictationViewModel: ObservableObject {
     enum Status: Equatable {
@@ -26,6 +42,11 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    @Published var backend: DictationBackend {
+        didSet {
+            defaults.set(backend.rawValue, forKey: DefaultsKeys.backend)
+        }
+    }
     @Published var apiKey: String
     @Published private(set) var transcript = ""
     @Published private(set) var status: Status = .idle
@@ -44,14 +65,25 @@ final class DictationViewModel: ObservableObject {
         !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var usesDeepgram: Bool {
+        backend == .deepgram
+    }
+
     private let audioCapture = AudioCaptureManager()
     private let sharedStore = SharedTranscriptStore.shared
+    private let defaults = UserDefaults.standard
 
+    private var localRecognizer: LocalSpeechRecognizer?
     private var deepgramClient: DeepgramStreamingClient?
     private var audioContinuation: AsyncStream<Data>.Continuation?
     private var audioSendTask: Task<Void, Never>?
 
+    private enum DefaultsKeys {
+        static let backend = "dictationBackend"
+    }
+
     init() {
+        backend = DictationBackend(rawValue: UserDefaults.standard.string(forKey: DefaultsKeys.backend) ?? "") ?? .local
         apiKey = KeychainStore.loadAPIKey()
         autoInsertOnKeyboardOpen = sharedStore.autoInsertOnKeyboardOpen
         transcript = sharedStore.latestTranscript().text
@@ -90,55 +122,16 @@ final class DictationViewModel: ObservableObject {
 
             status = .connecting
 
-            let client = DeepgramStreamingClient(apiKey: apiKey)
-            client.onTranscript = { [weak self] text, _ in
-                Task { @MainActor in
-                    self?.receiveTranscript(text)
-                }
-            }
-            client.onError = { [weak self] message in
-                Task { @MainActor in
-                    self?.status = .failed(message)
-                }
-            }
-
-            try await client.connect()
-            deepgramClient = client
-
-            let stream = AsyncStream<Data>.makeStream()
-            audioContinuation = stream.continuation
-
-            audioSendTask = Task { [weak client] in
-                for await chunk in stream.stream {
-                    guard !Task.isCancelled else {
-                        break
-                    }
-
-                    do {
-                        try await client?.sendAudio(chunk)
-                    } catch {
-                        await MainActor.run { [weak self] in
-                            self?.status = .failed(error.localizedDescription)
-                        }
-                        break
-                    }
-                }
-            }
-
-            let audioContinuation = stream.continuation
-            try await audioCapture.start { data in
-                audioContinuation.yield(data)
+            switch backend {
+            case .local:
+                try await startLocalRecording()
+            case .deepgram:
+                try await startDeepgramRecording()
             }
 
             status = .listening
         } catch {
-            audioCapture.stop()
-            audioContinuation?.finish()
-            audioContinuation = nil
-            audioSendTask?.cancel()
-            audioSendTask = nil
-            await deepgramClient?.disconnect()
-            deepgramClient = nil
+            await cleanUpRecording()
             status = .failed(error.localizedDescription)
         }
     }
@@ -149,6 +142,15 @@ final class DictationViewModel: ObservableObject {
         }
 
         status = .finishing
+
+        if let localRecognizer {
+            let finalText = await localRecognizer.stop()
+            receiveTranscript(finalText)
+            self.localRecognizer = nil
+            status = .idle
+            return
+        }
+
         audioCapture.stop()
         audioContinuation?.finish()
         audioContinuation = nil
@@ -192,5 +194,79 @@ final class DictationViewModel: ObservableObject {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = trimmedText
         sharedStore.saveTranscript(trimmedText)
+    }
+
+    private func startLocalRecording() async throws {
+        let recognizer = LocalSpeechRecognizer()
+        recognizer.onTranscript = { [weak self] text, _ in
+            Task { @MainActor in
+                self?.receiveTranscript(text)
+            }
+        }
+        recognizer.onError = { [weak self] message in
+            Task { @MainActor in
+                self?.status = .failed(message)
+            }
+        }
+
+        try await recognizer.start()
+        localRecognizer = recognizer
+    }
+
+    private func startDeepgramRecording() async throws {
+        let client = DeepgramStreamingClient(apiKey: apiKey)
+        client.onTranscript = { [weak self] text, _ in
+            Task { @MainActor in
+                self?.receiveTranscript(text)
+            }
+        }
+        client.onError = { [weak self] message in
+            Task { @MainActor in
+                self?.status = .failed(message)
+            }
+        }
+
+        try await client.connect()
+        deepgramClient = client
+
+        let stream = AsyncStream<Data>.makeStream()
+        audioContinuation = stream.continuation
+
+        audioSendTask = Task { [weak client] in
+            for await chunk in stream.stream {
+                guard !Task.isCancelled else {
+                    break
+                }
+
+                do {
+                    try await client?.sendAudio(chunk)
+                } catch {
+                    await MainActor.run { [weak self] in
+                        self?.status = .failed(error.localizedDescription)
+                    }
+                    break
+                }
+            }
+        }
+
+        let audioContinuation = stream.continuation
+        try await audioCapture.start { data in
+            audioContinuation.yield(data)
+        }
+    }
+
+    private func cleanUpRecording() async {
+        if let localRecognizer {
+            _ = await localRecognizer.stop()
+            self.localRecognizer = nil
+        }
+
+        audioCapture.stop()
+        audioContinuation?.finish()
+        audioContinuation = nil
+        audioSendTask?.cancel()
+        audioSendTask = nil
+        await deepgramClient?.disconnect()
+        deepgramClient = nil
     }
 }

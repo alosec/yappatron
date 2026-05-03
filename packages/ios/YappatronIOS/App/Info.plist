@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Yappatron records speech so it can transcribe dictation.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Yappatron transcribes speech locally on device.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>

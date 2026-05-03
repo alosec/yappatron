@@ -4,15 +4,12 @@
 
 ## TOP PRIORITY (next session)
 
-**iPhone local/on-device ASR spike** — P0
+**Test iPhone Local mode** — P0
 - Current state: Yappatron is installed and launches on a connected test iPhone via free Personal Team signing.
-- Problem: The iOS app currently expects a Deepgram API key; user does not want to fetch/create one just to test the mobile spike.
-- Goal: Get an on-device transcription path working in the iPhone app ASAP.
-- First options:
-  1. Reuse existing FluidAudio/Parakeet local stack on iOS if the package/model supports iPhone/Core ML cleanly.
-  2. If FluidAudio integration is too heavy, create a minimal local-model proof-of-life target or fixture to validate model loading/audio pipeline.
-  3. Keep Deepgram as an optional backend, not the first-test blocker.
-- Validation: record on iPhone, see transcript appear, then enable keyboard and insert transcript into another app via the Yappatron keyboard.
+- Local mode is now implemented with Apple's on-device Speech framework and is the default backend.
+- Goal: Verify that recording on iPhone produces a transcript without a Deepgram key.
+- Validation: grant microphone/speech permissions, record on iPhone, see transcript appear, then enable keyboard and insert transcript into another app via the Yappatron keyboard.
+- If Apple Speech is not good enough, evaluate FluidAudio/Parakeet iOS/Core ML integration next.
 
 ## Other Priorities
 
@@ -77,6 +74,7 @@
 
 ## Recently Completed
 - ✓ **iPhone app installed and launched** (2026-05-02) — Free Xcode Personal Team, Developer Mode, trusted profile
+- ✓ **Local iOS transcription mode** (2026-05-02) — Apple on-device Speech framework, Local default, Deepgram optional
 - ✓ **Free-device iOS bridge** (2026-05-02) — Removed App Group entitlement, replaced with Yappatron-tagged local pasteboard item
 - ✓ **iOS custom keyboard extension scaffold** (2026-05-02) — Inserts latest transcript with `textDocumentProxy.insertText`
 - ✓ **Forward-only chunk streaming** (2026-03-24) — is_final segments typed, interims for orb only

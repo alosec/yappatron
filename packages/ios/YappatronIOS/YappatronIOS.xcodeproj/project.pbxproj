@@ -18,6 +18,7 @@
 		A00000000000000000000409 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000308 /* Assets.xcassets */; };
 		A00000000000000000000410 /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000309 /* KeyboardViewController.swift */; };
 		A00000000000000000000411 /* YappatronKeyboard.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A00000000000000000000201 /* YappatronKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A00000000000000000000412 /* LocalSpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000314 /* LocalSpeechRecognizer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,6 +59,7 @@
 		A00000000000000000000309 /* KeyboardViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardViewController.swift; sourceTree = "<group>"; };
 		A00000000000000000000310 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A00000000000000000000311 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A00000000000000000000314 /* LocalSpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSpeechRecognizer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,6 +107,7 @@
 				A00000000000000000000302 /* ContentView.swift */,
 				A00000000000000000000303 /* DictationViewModel.swift */,
 				A00000000000000000000304 /* AudioCaptureManager.swift */,
+				A00000000000000000000314 /* LocalSpeechRecognizer.swift */,
 				A00000000000000000000305 /* DeepgramStreamingClient.swift */,
 				A00000000000000000000306 /* KeychainStore.swift */,
 				A00000000000000000000310 /* Info.plist */,
@@ -232,6 +235,7 @@
 				A00000000000000000000402 /* ContentView.swift in Sources */,
 				A00000000000000000000403 /* DictationViewModel.swift in Sources */,
 				A00000000000000000000404 /* AudioCaptureManager.swift in Sources */,
+				A00000000000000000000412 /* LocalSpeechRecognizer.swift in Sources */,
 				A00000000000000000000405 /* DeepgramStreamingClient.swift in Sources */,
 				A00000000000000000000406 /* KeychainStore.swift in Sources */,
 				A00000000000000000000407 /* SharedTranscriptStore.swift in Sources */,

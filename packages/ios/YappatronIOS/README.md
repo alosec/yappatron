@@ -6,6 +6,7 @@ Native iPhone companion app for Yappatron dictation.
 
 - `YappatronIOS` iOS app target
   - SwiftUI recorder UI
+  - Local on-device speech recognition mode
   - Deepgram Nova-3 realtime WebSocket transcription
   - API key storage in Keychain
   - Background audio mode declaration
@@ -31,6 +32,7 @@ The app declares `UIBackgroundModes = audio`, which is the same family of workar
 - Full Xcode installed and selected
 - iOS 17+ device or simulator
 - Apple Account in Xcode for free Personal Team device builds
+- iPhone Developer Mode enabled for direct install
 - Bundle IDs:
   - App: `com.yappatron.ios`
   - Keyboard: `com.yappatron.ios.keyboard`
@@ -49,6 +51,8 @@ In Xcode:
 2. Set your Personal Team on both `YappatronIOS` and `YappatronKeyboard`.
 3. Run `YappatronIOS` on an iPhone.
 4. On iPhone, enable the keyboard in Settings > General > Keyboard > Keyboards, then turn on Allow Full Access for Yappatron Keyboard.
+
+The app defaults to Local mode, which uses Apple's on-device speech recognition and does not require a Deepgram API key. Deepgram remains available from the Mode picker.
 
 ## TestFlight
 

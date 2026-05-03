@@ -4,10 +4,10 @@
 
 ## Active Blockers
 
-### iPhone First-Run Transcription — P0
-- **Problem:** The installed iPhone app currently depends on a Deepgram API key to transcribe, and the user does not want to create/fetch one just to test the mobile spike.
-- **Decision direction:** Spike local/on-device ASR next, preferably reusing FluidAudio/Parakeet if viable on iOS.
-- **Why it matters:** The app now launches on iPhone, so transcription itself is the next proof point.
+### iPhone First-Run Transcription Validation — P0
+- **Problem:** Local mode is implemented but not yet user-validated on device.
+- **Current path:** Apple on-device Speech recognition is the default iOS backend, so no Deepgram key is needed for the next test.
+- **Fallback direction:** If Apple Speech is unavailable or not good enough, evaluate FluidAudio/Parakeet on iOS next.
 
 ### iOS Keyboard Enablement — P1
 - **Problem:** The keyboard extension is installed with the app, but the user still needs to enable it in iOS settings and allow Full Access before type-anywhere insertion can be tested.
