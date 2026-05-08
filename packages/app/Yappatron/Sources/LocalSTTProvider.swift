@@ -11,6 +11,7 @@ class LocalSTTProvider: STTProvider {
     var onFinal: ((String) -> Void)?
     var onLockedTextAdvanced: ((Int) -> Void)?
     var onDiarizedFinal: (([(speakerId: Int, text: String, startSec: Double, endSec: Double)]) -> Void)?
+    var onTimedFinal: (([(text: String, startSec: Double, endSec: Double)]) -> Void)?
 
     func start() async throws {
         let modelDir = try await downloadModels()

@@ -224,19 +224,15 @@ class TranscriptionEngine: ObservableObject {
     // with a stronger embedding match against an enrolled speaker.
     private var pendingDiarizedRuns: [(speakerId: Int, text: String, displayName: String?)]?
 
-    // Hybrid diarization (local embedding override of Deepgram's IDs)
+    // Local diarization (drop-in replacement for Deepgram's per-word speaker IDs).
     private let speakerEmbedder = SpeakerEmbedder()
     /// Exposed so the enrollment UI can share the same loaded embedder instance.
     var publicSpeakerEmbedder: SpeakerEmbedder { speakerEmbedder }
-    private lazy var hybridDiarizer = HybridDiarizer(embedder: speakerEmbedder)
-    // Long-lived audio buffer indexed by Deepgram-relative time (zero = first
-    // audio buffer successfully sent to the provider).
-    private let streamAudioBuffer = StreamAudioBuffer()
-    private var didAnchorStreamBuffer = false
-    /// Task running the embedding override for the current utterance.
-    /// `handleFinalTranscription` awaits this before consuming pendingDiarizedRuns
-    /// so the typed text reflects the override decisions, not the raw Deepgram IDs.
-    private var pendingOverrideTask: Task<Void, Never>?
+    private let segmenter = SpeakerSegmenter()
+    private var didAnchorSegmenter = false
+    /// Task that runs the segmenter on the current utterance's audio before
+    /// handleFinalTranscription emits the labeled string.
+    private var pendingSegmenterTask: Task<Void, Never>?
 
     // Audio buffer queue - prevents race conditions without blocking audio thread
     private let audioBufferQueue = AudioBufferQueue()
@@ -304,8 +300,8 @@ class TranscriptionEngine: ObservableObject {
                 // Called on main thread from provider — pass through directly
                 self?.onLockedTextAdvanced?(lockedLen)
             }
-            provider.onDiarizedFinal = { [weak self] runs in
-                self?.handleDiarizedFinal(runs)
+            provider.onTimedFinal = { [weak self] words in
+                self?.handleTimedFinal(words)
             }
 
             log("Starting STT provider...")
@@ -367,40 +363,55 @@ class TranscriptionEngine: ObservableObject {
         }
     }
 
-    private func handleDiarizedFinal(_ runs: [(speakerId: Int, text: String, startSec: Double, endSec: Double)]) {
-        for run in runs { SpeakerLabelMap.recordSeen(run.speakerId) }
-
-        // Default: store with no override.
-        pendingDiarizedRuns = runs.map { (speakerId: $0.speakerId, text: $0.text, displayName: Optional<String>.none) }
+    /// Local-diarization-only path. Words arrive with timing only (no Deepgram
+    /// speaker IDs). Run the segmenter on the buffered audio, look up which
+    /// speaker was active per word, group into runs, and store for emission.
+    private func handleTimedFinal(_ words: [(text: String, startSec: Double, endSec: Double)]) {
+        // Provisional: type words as a single unlabeled run if the segmenter
+        // hasn't completed yet (handleFinalTranscription will await).
+        let raw = words.map { (speakerId: 0, text: $0.text, displayName: Optional<String>.none) }
+        pendingDiarizedRuns = raw
 
         let enrolled = SpeakerRegistry.loadAll()
-        guard !enrolled.isEmpty else { return }
-
-        // Run override BEFORE handleFinalTranscription consumes pendingDiarizedRuns.
-        // Both onDiarizedFinal and onFinal are dispatched to main in order, so we
-        // need handleFinalTranscription to wait for the override result. We do
-        // that by gating handleFinalTranscription on `pendingOverrideTask`, which
-        // is set here and awaited there.
-        let runsWithTiming = runs
-        pendingOverrideTask = Task { [weak self] in
+        let wordsCopy = words
+        pendingSegmenterTask = Task { [weak self] in
             guard let self = self else { return }
-            let totalBuffered = await self.streamAudioBuffer.totalBufferedSeconds()
-            HybridDiagLog.shared.write("--- new diarized final: \(runsWithTiming.count) runs, buffer=\(String(format: "%.2f", totalBuffered))s ---")
-            var withAudio: [DiarizedRunWithAudio] = []
-            for run in runsWithTiming {
-                let samples = await self.streamAudioBuffer.slice(startSec: run.startSec, endSec: run.endSec)
-                let gotSec = Double(samples.count) / 16000.0
-                let askSec = run.endSec - run.startSec
-                HybridDiagLog.shared.write("  run dgId=\(run.speakerId) ask=[\(String(format: "%.2f", run.startSec))→\(String(format: "%.2f", run.endSec))] askDur=\(String(format: "%.2f", askSec))s gotSamples=\(samples.count) gotDur=\(String(format: "%.2f", gotSec))s text='\(run.text.prefix(60))'")
-                withAudio.append(DiarizedRunWithAudio(
-                    deepgramSpeakerId: run.speakerId,
-                    text: run.text,
-                    samples: samples
-                ))
+            do {
+                try await self.segmenter.loadIfNeeded()
+            } catch {
+                HybridDiagLog.shared.write("SpeakerSegmenter: load failed: \(error.localizedDescription)")
+                return
             }
-            let overridden = await self.hybridDiarizer.override(runs: withAudio, enrolled: enrolled)
+
+            await self.segmenter.rediarizeIfStale(enrolled: enrolled)
+
+            // Attribute each word to a speaker by midpoint timestamp.
+            var runs: [(speakerId: Int, text: String, displayName: String?)] = []
+            var stableSpeakerCounter = 0
+            var labelToInt: [String: Int] = [:]
+            for w in wordsCopy {
+                let mid = (w.startSec + w.endSec) / 2.0
+                let label = await self.segmenter.speakerLabel(atSec: mid) ?? "Speaker ?"
+                let intId: Int
+                if let existing = labelToInt[label] {
+                    intId = existing
+                } else {
+                    intId = stableSpeakerCounter
+                    labelToInt[label] = intId
+                    stableSpeakerCounter += 1
+                }
+                if var last = runs.last, last.displayName == label {
+                    last.text += " " + w.text
+                    runs[runs.count - 1] = last
+                } else {
+                    runs.append((speakerId: intId, text: w.text, displayName: label))
+                }
+            }
+
+            HybridDiagLog.shared.write("handleTimedFinal: \(words.count) words -> \(runs.count) runs (\(labelToInt.keys.joined(separator: ", ")))")
+
             await MainActor.run {
-                self.pendingDiarizedRuns = overridden.map { (speakerId: $0.deepgramSpeakerId, text: $0.text, displayName: $0.enrolledName) }
+                self.pendingDiarizedRuns = runs
             }
         }
     }
@@ -449,14 +460,14 @@ class TranscriptionEngine: ObservableObject {
         let trimmed = final.trimmingCharacters(in: .whitespacesAndNewlines)
         log("Final (EOU): '\(trimmed)'")
 
-        // Wait for the embedding override to land (if any) so the typed text
-        // reflects the corrected speaker labels, not the raw Deepgram IDs.
-        let overrideTask = pendingOverrideTask
-        pendingOverrideTask = nil
+        // Wait for the local segmenter pass to complete so the typed text
+        // reflects the speaker attributions, not a single unlabeled run.
+        let segTask = pendingSegmenterTask
+        pendingSegmenterTask = nil
 
         Task { [weak self] in
-            if let overrideTask = overrideTask {
-                _ = await overrideTask.value
+            if let segTask = segTask {
+                _ = await segTask.value
             }
             await MainActor.run { [weak self] in
                 self?.emitFinalTranscription(trimmed)
@@ -537,8 +548,8 @@ class TranscriptionEngine: ObservableObject {
     func stopCapture() {
         audioEngine?.stop()
         status = .ready
-        didAnchorStreamBuffer = false
-        Task { await streamAudioBuffer.reset() }
+        didAnchorSegmenter = false
+        Task { await segmenter.reset() }
         log("Listening stopped")
     }
 
@@ -669,14 +680,20 @@ class TranscriptionEngine: ObservableObject {
                         // not just after isSpeaking flag is set (which happens after first partial arrives)
                         await self.audioChunkBuffer?.append(buffer)
 
-                        // Anchor the stream buffer to Deepgram's t=0 (the moment the
-                        // first audio chunk was successfully sent). Then append.
-                        if !self.didAnchorStreamBuffer {
-                            self.didAnchorStreamBuffer = true
-                            await self.streamAudioBuffer.anchor()
-                            HybridDiagLog.shared.write("StreamAudioBuffer anchored — first audio sent to Deepgram")
+                        // Anchor the segmenter to Deepgram's t=0 (the moment the
+                        // first audio chunk was successfully sent), so its segment
+                        // timestamps align with Deepgram's word timestamps. Then
+                        // feed the chunk in.
+                        if !self.didAnchorSegmenter {
+                            self.didAnchorSegmenter = true
+                            await self.segmenter.anchor()
+                            HybridDiagLog.shared.write("SpeakerSegmenter anchored — first audio sent to Deepgram")
                         }
-                        await self.streamAudioBuffer.append(buffer)
+                        if let channelData = buffer.floatChannelData {
+                            let frameLength = Int(buffer.frameLength)
+                            let chunk = Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
+                            await self.segmenter.append(chunk)
+                        }
                     } catch {
                         log("STT process error: \(error.localizedDescription)")
                     }

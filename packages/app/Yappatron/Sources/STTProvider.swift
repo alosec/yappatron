@@ -32,4 +32,10 @@ protocol STTProvider: AnyObject {
     /// engine can slice audio for embedding-based override.
     /// Providers without diarization leave this nil.
     var onDiarizedFinal: (([(speakerId: Int, text: String, startSec: Double, endSec: Double)]) -> Void)? { get set }
+
+    /// Called on is_final segments with word-level timing only (no speaker IDs).
+    /// Used when the engine is doing local-diarization-only labeling: the words
+    /// arrive timestamped, the engine looks up the active speaker per word from
+    /// SpeakerSegmenter, and groups runs itself.
+    var onTimedFinal: (([(text: String, startSec: Double, endSec: Double)]) -> Void)? { get set }
 }

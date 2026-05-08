@@ -22,6 +22,10 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     /// Per-run audio time bounds (seconds since stream open), parallel to currentDiarizedRuns.
     /// Used by the engine to slice audio for embedding-based override.
     private var currentRunTimings: [(startSec: Double, endSec: Double)] = []
+    /// Word-level timing for the current utterance, used by the
+    /// local-diarization-only path to attribute each word to a speaker via
+    /// SpeakerSegmenter without depending on Deepgram's IDs.
+    private var currentTimedWords: [(text: String, startSec: Double, endSec: Double)] = []
     private var eouTimer: Task<Void, Never>?
     private var finalizeContinuation: CheckedContinuation<String?, Never>?
     private var finalizeTimeoutTask: Task<Void, Never>?
@@ -31,6 +35,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     var onFinal: ((String) -> Void)?
     var onLockedTextAdvanced: ((Int) -> Void)?
     var onDiarizedFinal: (([(speakerId: Int, text: String, startSec: Double, endSec: Double)]) -> Void)?
+    var onTimedFinal: (([(text: String, startSec: Double, endSec: Double)]) -> Void)?
 
     init(apiKey: String) {
         self.apiKey = apiKey
@@ -53,7 +58,8 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             URLQueryItem(name: "channels", value: "1"),
             URLQueryItem(name: "endpointing", value: "2750"),
             URLQueryItem(name: "smart_format", value: "true"),
-            URLQueryItem(name: "diarize", value: "true"),
+            // Diarization done locally via SpeakerSegmenter — Deepgram is
+            // transcription-only. Word-level timestamps come back regardless.
         ]
 
         guard let url = components.url else {
@@ -154,6 +160,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         currentUtterance = ""
         currentDiarizedRuns = []
         currentRunTimings = []
+        currentTimedWords = []
         return pending.isEmpty ? nil : pending
     }
 
@@ -161,6 +168,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         currentUtterance = ""
         currentDiarizedRuns = []
         currentRunTimings = []
+        currentTimedWords = []
         lastInterimText = ""
         lastEmittedPartial = ""
         eouTimer?.cancel()
@@ -281,7 +289,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
 
             // Pull word-level speaker tags (present when diarize=true) and merge into runs.
             if let words = firstAlt["words"] as? [[String: Any]] {
-                appendDiarizedRuns(from: words)
+                appendTimedWords(from: words)
             }
 
             if false /* speechFinal disabled — let silence timeout handle EOU */ {
@@ -322,19 +330,19 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         guard !currentUtterance.isEmpty else { return }
 
         let utterance = currentUtterance
-        let runs = takeRunsWithTimings()
+        let words = takeTimedWords()
         currentUtterance = ""
         eouTimer?.cancel()
 
-        log("DeepgramSTTProvider: UtteranceEnd: '\(utterance)' (\(runs.count) speaker runs)")
+        log("DeepgramSTTProvider: UtteranceEnd: '\(utterance)' (\(words.count) timed words)")
         if finalizeContinuation != nil {
             completeFinalize(with: utterance)
             return
         }
 
         DispatchQueue.main.async { [weak self] in
-            if !runs.isEmpty {
-                self?.onDiarizedFinal?(runs)
+            if !words.isEmpty {
+                self?.onTimedFinal?(words)
             }
             self?.onFinal?(utterance)
         }
@@ -348,20 +356,28 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             guard let self = self, !self.currentUtterance.isEmpty else { return }
 
             let utterance = self.currentUtterance
-            let runs = self.takeRunsWithTimings()
+            let words = self.takeTimedWords()
             self.currentUtterance = ""
 
-            log("DeepgramSTTProvider: EOU timer fired: '\(utterance)' (\(runs.count) speaker runs)")
+            log("DeepgramSTTProvider: EOU timer fired: '\(utterance)' (\(words.count) timed words)")
             DispatchQueue.main.async { [weak self] in
-                if !runs.isEmpty {
-                    self?.onDiarizedFinal?(runs)
+                if !words.isEmpty {
+                    self?.onTimedFinal?(words)
                 }
                 self?.onFinal?(utterance)
             }
         }
     }
 
+    /// Drain currentTimedWords and clear it. Returned in capture order.
+    private func takeTimedWords() -> [(text: String, startSec: Double, endSec: Double)] {
+        let out = currentTimedWords
+        currentTimedWords = []
+        return out
+    }
+
     /// Drain currentDiarizedRuns + currentRunTimings into a single tuple list and clear both.
+    /// Legacy — retained only so the takePendingUtterance signature still compiles.
     private func takeRunsWithTimings() -> [(speakerId: Int, text: String, startSec: Double, endSec: Double)] {
         let count = min(currentDiarizedRuns.count, currentRunTimings.count)
         var out: [(speakerId: Int, text: String, startSec: Double, endSec: Double)] = []
@@ -376,53 +392,30 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         return out
     }
 
-    /// Group word-level speaker tags from a Results frame into runs of the same speaker
-    /// and append to `currentDiarizedRuns`, merging the boundary if the previous run
-    /// already ended with the same speaker. Also collects per-run audio time bounds
-    /// from the words' `start`/`end` fields (seconds since stream open).
-    private func appendDiarizedRuns(from words: [[String: Any]]) {
-        struct LocalRun { var speakerId: Int; var text: String; var startSec: Double; var endSec: Double }
-        var localRuns: [LocalRun] = []
+    /// Append the words from a Results frame as flat timed entries to
+    /// currentTimedWords. Speaker IDs from Deepgram are ignored — local
+    /// diarization (SpeakerSegmenter) attributes each word by timestamp.
+    private func appendTimedWords(from words: [[String: Any]]) {
         for w in words {
             guard let punct = (w["punctuated_word"] as? String) ?? (w["word"] as? String),
                   !punct.isEmpty else { continue }
-            let speakerId = w["speaker"] as? Int ?? 0
             let start = (w["start"] as? Double) ?? 0
             let end = (w["end"] as? Double) ?? start
-            if var last = localRuns.last, last.speakerId == speakerId {
-                last.text += " " + punct
-                last.endSec = end
-                localRuns[localRuns.count - 1] = last
-            } else {
-                localRuns.append(LocalRun(speakerId: speakerId, text: punct, startSec: start, endSec: end))
-            }
-        }
-        guard !localRuns.isEmpty else { return }
-        for run in localRuns {
-            if var last = currentDiarizedRuns.last, last.speakerId == run.speakerId,
-               var lastTiming = currentRunTimings.last {
-                last.text += " " + run.text
-                lastTiming.endSec = run.endSec
-                currentDiarizedRuns[currentDiarizedRuns.count - 1] = last
-                currentRunTimings[currentRunTimings.count - 1] = lastTiming
-            } else {
-                currentDiarizedRuns.append((speakerId: run.speakerId, text: run.text))
-                currentRunTimings.append((startSec: run.startSec, endSec: run.endSec))
-            }
+            currentTimedWords.append((text: punct, startSec: start, endSec: end))
         }
     }
 
     private func takePendingUtterance() -> String? {
         let pending = currentUtterance
-        let pendingRuns = takeRunsWithTimings()
+        let pendingWords = takeTimedWords()
         currentUtterance = ""
         lastInterimText = ""
         lastEmittedPartial = ""
         eouTimer?.cancel()
         eouTimer = nil
-        if !pendingRuns.isEmpty {
+        if !pendingWords.isEmpty {
             DispatchQueue.main.async { [weak self] in
-                self?.onDiarizedFinal?(pendingRuns)
+                self?.onTimedFinal?(pendingWords)
             }
         }
         return pending.isEmpty ? nil : pending
