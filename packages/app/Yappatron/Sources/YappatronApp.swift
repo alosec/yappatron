@@ -401,6 +401,45 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             menu.addItem(refinementItem)
         }
 
+        // Speaker Labels (Diarization) — Deepgram only
+        if STTBackend.current == .deepgram {
+            let labelsItem = NSMenuItem(title: "Speaker Labels (Diarization)", action: #selector(toggleSpeakerLabels), keyEquivalent: "")
+            labelsItem.state = SpeakerLabelMap.enabled ? .on : .off
+            menu.addItem(labelsItem)
+
+            // Line break style submenu
+            let lineBreakItem = NSMenuItem(title: "Line Breaks Between Speakers", action: nil, keyEquivalent: "")
+            let lineBreakMenu = NSMenu()
+            for style in LineBreakStyle.allCases {
+                let item = NSMenuItem(title: style.displayName, action: #selector(selectLineBreakStyle(_:)), keyEquivalent: "")
+                item.representedObject = style.rawValue
+                item.state = (style == SpeakerLabelMap.lineBreakStyle) ? .on : .off
+                lineBreakMenu.addItem(item)
+            }
+            lineBreakItem.submenu = lineBreakMenu
+            menu.addItem(lineBreakItem)
+
+            let nameItem = NSMenuItem(title: "Name Speakers", action: nil, keyEquivalent: "")
+            let nameMenu = NSMenu()
+            let seen = SpeakerLabelMap.seenSpeakerIds()
+            if seen.isEmpty {
+                let placeholder = NSMenuItem(title: "(No speakers seen yet)", action: nil, keyEquivalent: "")
+                placeholder.isEnabled = false
+                nameMenu.addItem(placeholder)
+            } else {
+                for id in seen {
+                    let title = "Speaker \(id) → \(SpeakerLabelMap.name(forSpeakerId: id))"
+                    let item = NSMenuItem(title: title, action: #selector(renameSpeaker(_:)), keyEquivalent: "")
+                    item.representedObject = id
+                    nameMenu.addItem(item)
+                }
+            }
+            nameMenu.addItem(NSMenuItem.separator())
+            nameMenu.addItem(NSMenuItem(title: "Reset All Names", action: #selector(resetSpeakerNames), keyEquivalent: ""))
+            nameItem.submenu = nameMenu
+            menu.addItem(nameItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
 
         // STT Backend submenu
@@ -681,6 +720,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    @objc func toggleSpeakerLabels() {
+        SpeakerLabelMap.enabled.toggle()
+    }
+
+    @objc func renameSpeaker(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? Int else { return }
+        let alert = NSAlert()
+        alert.messageText = "Name Speaker \(id)"
+        alert.informativeText = "What should we label this speaker as in the typed transcript?"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        input.stringValue = SpeakerLabelMap.name(forSpeakerId: id)
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            SpeakerLabelMap.setName(input.stringValue, forSpeakerId: id)
+        }
+    }
+
+    @objc func resetSpeakerNames() {
+        SpeakerLabelMap.resetAll()
+    }
+
+    @objc func selectLineBreakStyle(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let style = LineBreakStyle(rawValue: raw) else { return }
+        SpeakerLabelMap.lineBreakStyle = style
     }
 
     @objc func selectDictationMode(_ sender: NSMenuItem) {

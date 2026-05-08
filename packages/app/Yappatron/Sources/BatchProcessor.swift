@@ -15,6 +15,7 @@ actor BatchProcessor {
 
     private(set) var status: Status = .uninitialized
     private var asrManager: AsrManager?
+    private var decoderState: TdtDecoderState?
 
     func initialize() async throws {
         status = .downloading
@@ -24,11 +25,11 @@ actor BatchProcessor {
             // Download and load TDT v3 models (multilingual, includes punctuation)
             let models = try await AsrModels.downloadAndLoad(version: .v3)
 
-            // Create ASR manager with default config
-            let manager = AsrManager(config: .default)
-            try await manager.initialize(models: models)
+            // Create ASR manager with default config and models in one shot (0.14+ API)
+            let manager = AsrManager(config: .default, models: models)
 
             self.asrManager = manager
+            self.decoderState = try TdtDecoderState()
             status = .ready
             log("[BatchProcessor] Batch processor ready (TDT 0.6b v3)")
 
@@ -61,8 +62,10 @@ actor BatchProcessor {
 
         let startTime = Date()
 
-        // Process samples through batch ASR
-        let result = try await manager.transcribe(samples, source: .system)
+        // Process samples through batch ASR (0.14+ API: stateful decoder)
+        var state = try decoderState ?? TdtDecoderState()
+        let result = try await manager.transcribe(samples, decoderState: &state)
+        decoderState = state
 
         let elapsed = Date().timeIntervalSince(startTime)
         let audioLength = Float(samples.count) / 16000.0

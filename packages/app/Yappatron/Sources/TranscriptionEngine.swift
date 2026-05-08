@@ -155,6 +155,13 @@ class TranscriptionEngine: ObservableObject {
     // Track current partial for diffing
     private var currentPartial: String = ""
 
+    // Last speaker ID emitted via onTranscription, so we only insert "[Name] "
+    // when the speaker actually changes across utterances.
+    private var lastLabeledSpeakerId: Int?
+    // Most recent diarized runs for the current utterance, captured in onDiarizedFinal
+    // and consumed by handleFinalTranscription to format the typed string.
+    private var pendingDiarizedRuns: [(speakerId: Int, text: String)]?
+
     // Audio buffer queue - prevents race conditions without blocking audio thread
     private let audioBufferQueue = AudioBufferQueue()
     private let audioProcessingState = AudioProcessingState()
@@ -221,6 +228,9 @@ class TranscriptionEngine: ObservableObject {
                 // Called on main thread from provider — pass through directly
                 self?.onLockedTextAdvanced?(lockedLen)
             }
+            provider.onDiarizedFinal = { [weak self] runs in
+                self?.handleDiarizedFinal(runs)
+            }
 
             log("Starting STT provider...")
             try await provider.start()
@@ -281,9 +291,67 @@ class TranscriptionEngine: ObservableObject {
         }
     }
 
+    private func handleDiarizedFinal(_ runs: [(speakerId: Int, text: String)]) {
+        pendingDiarizedRuns = runs
+        for run in runs { SpeakerLabelMap.recordSeen(run.speakerId) }
+    }
+
+    /// Format the diarized runs into a single typed string with `[Name] ` prefixes.
+    /// Every utterance always leads with a label so the reader (or downstream LLM)
+    /// can attribute every line. Within an utterance, label only changes when the
+    /// speaker actually changes — consecutive same-speaker words don't get re-labeled.
+    /// On every speaker change (including the first run of an utterance, when a
+    /// line break style is set), the configured `LineBreakStyle.separator` is
+    /// inserted so terminals/editors get a real line break.
+    private func formatLabeled(_ runs: [(speakerId: Int, text: String)]) -> String {
+        let style = SpeakerLabelMap.lineBreakStyle
+        var output = ""
+        // Reset within-utterance tracking so the first run always emits a label.
+        var lastId: Int? = nil
+        var isFirstSegment = true
+        var leadSpeakerId: Int? = nil
+        for run in runs {
+            let trimmedRun = run.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedRun.isEmpty else { continue }
+            if run.speakerId != lastId {
+                if !isFirstSegment {
+                    // Within-utterance speaker change — always insert separator.
+                    output += style.separator
+                } else if style != .none && lastLabeledSpeakerId != nil {
+                    // Continuing a session: start this utterance on a new line.
+                    output += style.separator
+                }
+                output += "[\(SpeakerLabelMap.name(forSpeakerId: run.speakerId))] \(trimmedRun)"
+                lastId = run.speakerId
+                if leadSpeakerId == nil { leadSpeakerId = run.speakerId }
+            } else {
+                if !isFirstSegment {
+                    output += " "
+                }
+                output += trimmedRun
+            }
+            isFirstSegment = false
+        }
+        // Remember the *last* speaker of this utterance so cross-utterance line
+        // breaks know whether to fire (only fire if there was a previous speaker).
+        if let lastId = lastId {
+            lastLabeledSpeakerId = lastId
+        }
+        return output
+    }
+
     private func handleFinalTranscription(_ final: String) {
         let trimmed = final.trimmingCharacters(in: .whitespacesAndNewlines)
         log("Final (EOU): '\(trimmed)'")
+
+        // If diarization labeling is enabled and we have runs from the matching
+        // onDiarizedFinal, reformat the text with [Name] prefixes.
+        var emittedText = trimmed
+        if SpeakerLabelMap.enabled, let runs = pendingDiarizedRuns, !runs.isEmpty {
+            emittedText = formatLabeled(runs)
+            log("Final (labeled): '\(emittedText)'")
+        }
+        pendingDiarizedRuns = nil
 
         // Reset partial tracking
         currentPartial = ""
@@ -301,12 +369,12 @@ class TranscriptionEngine: ObservableObject {
             }
 
             DispatchQueue.main.async { [weak self] in
-                if !trimmed.isEmpty {
-                    self?.onTranscription?(trimmed)
+                if !emittedText.isEmpty {
+                    self?.onTranscription?(emittedText)
 
                     // Only provide audio for refinement if backend doesn't already punctuate
                     if !(self?.backend.returnsPunctuatedText ?? true) && !audioSamples.isEmpty {
-                        self?.onUtteranceComplete?(audioSamples, trimmed)
+                        self?.onUtteranceComplete?(audioSamples, emittedText)
                     }
                 }
 

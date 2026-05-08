@@ -10,6 +10,7 @@ class LocalSTTProvider: STTProvider {
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
     var onLockedTextAdvanced: ((Int) -> Void)?
+    var onDiarizedFinal: (([(speakerId: Int, text: String)]) -> Void)?
 
     func start() async throws {
         let modelDir = try await downloadModels()
@@ -23,7 +24,7 @@ class LocalSTTProvider: STTProvider {
             eouDebounceMs: 800
         )
 
-        try await manager.loadModels(modelDir: modelDir)
+        try await manager.loadModels(from: modelDir)
 
         await manager.setPartialCallback { [weak self] partial in
             self?.onPartial?(partial)

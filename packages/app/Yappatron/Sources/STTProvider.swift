@@ -26,4 +26,8 @@ protocol STTProvider: AnyObject {
     var onFinal: ((String) -> Void)? { get set }
     /// Called when locked (is_final) text advances — parameter is the locked text length
     var onLockedTextAdvanced: ((Int) -> Void)? { get set }
+    /// Called on is_final segments when the provider can attribute words to speakers.
+    /// Runs are pre-grouped: consecutive same-speaker words are merged into one entry.
+    /// Providers without diarization leave this nil.
+    var onDiarizedFinal: (([(speakerId: Int, text: String)]) -> Void)? { get set }
 }
