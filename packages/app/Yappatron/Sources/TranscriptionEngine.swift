@@ -233,6 +233,10 @@ class TranscriptionEngine: ObservableObject {
     // audio buffer successfully sent to the provider).
     private let streamAudioBuffer = StreamAudioBuffer()
     private var didAnchorStreamBuffer = false
+    /// Task running the embedding override for the current utterance.
+    /// `handleFinalTranscription` awaits this before consuming pendingDiarizedRuns
+    /// so the typed text reflects the override decisions, not the raw Deepgram IDs.
+    private var pendingOverrideTask: Task<Void, Never>?
 
     // Audio buffer queue - prevents race conditions without blocking audio thread
     private let audioBufferQueue = AudioBufferQueue()
@@ -366,17 +370,19 @@ class TranscriptionEngine: ObservableObject {
     private func handleDiarizedFinal(_ runs: [(speakerId: Int, text: String, startSec: Double, endSec: Double)]) {
         for run in runs { SpeakerLabelMap.recordSeen(run.speakerId) }
 
-        // Default: store with no override. The hybrid pass below replaces this if
-        // we have enrolled speakers and the embedding match is strong enough.
+        // Default: store with no override.
         pendingDiarizedRuns = runs.map { (speakerId: $0.speakerId, text: $0.text, displayName: Optional<String>.none) }
 
         let enrolled = SpeakerRegistry.loadAll()
         guard !enrolled.isEmpty else { return }
 
-        // Slice audio per run, run hybrid override asynchronously, and update
-        // pendingDiarizedRuns before handleFinalTranscription consumes them.
+        // Run override BEFORE handleFinalTranscription consumes pendingDiarizedRuns.
+        // Both onDiarizedFinal and onFinal are dispatched to main in order, so we
+        // need handleFinalTranscription to wait for the override result. We do
+        // that by gating handleFinalTranscription on `pendingOverrideTask`, which
+        // is set here and awaited there.
         let runsWithTiming = runs
-        Task { [weak self] in
+        pendingOverrideTask = Task { [weak self] in
             guard let self = self else { return }
             let totalBuffered = await self.streamAudioBuffer.totalBufferedSeconds()
             HybridDiagLog.shared.write("--- new diarized final: \(runsWithTiming.count) runs, buffer=\(String(format: "%.2f", totalBuffered))s ---")
@@ -443,6 +449,24 @@ class TranscriptionEngine: ObservableObject {
         let trimmed = final.trimmingCharacters(in: .whitespacesAndNewlines)
         log("Final (EOU): '\(trimmed)'")
 
+        // Wait for the embedding override to land (if any) so the typed text
+        // reflects the corrected speaker labels, not the raw Deepgram IDs.
+        let overrideTask = pendingOverrideTask
+        pendingOverrideTask = nil
+
+        Task { [weak self] in
+            if let overrideTask = overrideTask {
+                _ = await overrideTask.value
+            }
+            await MainActor.run { [weak self] in
+                self?.emitFinalTranscription(trimmed)
+            }
+        }
+    }
+
+    /// Actual emission path — runs after the override task (if any) has settled.
+    @MainActor
+    private func emitFinalTranscription(_ trimmed: String) {
         // If diarization labeling is enabled and we have runs from the matching
         // onDiarizedFinal, reformat the text with [Name] prefixes.
         var emittedText = trimmed
