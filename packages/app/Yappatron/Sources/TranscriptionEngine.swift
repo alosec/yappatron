@@ -122,23 +122,33 @@ actor AudioChunkBuffer {
     }
 }
 
-/// Rolling audio buffer indexed by stream-relative time (seconds since stream
-/// open). Used by the hybrid diarizer to slice per-run audio matching Deepgram's
-/// word-level start/end timestamps. Capped at ~120 seconds to bound memory.
+/// Rolling audio buffer indexed by Deepgram-relative time. Time zero is anchored
+/// to the moment the first audio buffer was successfully sent to the STT
+/// provider — that's also Deepgram's t=0 for word-level timestamps. Each chunk
+/// is tagged with its insertion offset so slicing matches Deepgram's timeline.
+/// Capped at ~120 seconds to bound memory.
 actor StreamAudioBuffer {
     private var samples: [Float] = []
+    private var droppedSamples: Int = 0
     private let sampleRate: Int = 16000
     private let maxSeconds: Int = 120
 
-    /// Append samples from the latest audio buffer. Must be called in the same
-    /// order as audio was captured.
+    /// True once the first audio buffer has been appended after STT start.
+    private var anchored = false
+
+    func anchor() {
+        anchored = true
+        samples.removeAll()
+        droppedSamples = 0
+    }
+
     func append(_ buffer: AVAudioPCMBuffer) {
+        guard anchored else { return }  // ignore audio captured before Deepgram started
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         guard frameLength > 0 else { return }
         let chunk = Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
         samples.append(contentsOf: chunk)
-        // Drop the front if we exceed the cap, keeping a sliding window.
         let maxSamples = sampleRate * maxSeconds
         if samples.count > maxSamples {
             let drop = samples.count - maxSamples
@@ -147,12 +157,8 @@ actor StreamAudioBuffer {
         }
     }
 
-    /// Number of samples that have been dropped from the front. Used to
-    /// translate Deepgram's stream-absolute timestamps into our buffer indices.
-    private var droppedSamples: Int = 0
-
-    /// Slice samples between `startSec` and `endSec` (stream-relative). Returns
-    /// empty array if the requested window is older than what we still hold.
+    /// Slice samples for [startSec, endSec] in Deepgram's timeline. Returns the
+    /// requested window if still buffered, else empty.
     func slice(startSec: Double, endSec: Double) -> [Float] {
         guard endSec > startSec else { return [] }
         let absoluteStart = Int(startSec * Double(sampleRate))
@@ -163,9 +169,14 @@ actor StreamAudioBuffer {
         return Array(samples[localStart..<localEnd])
     }
 
+    func totalBufferedSeconds() -> Double {
+        return Double(samples.count + droppedSamples) / Double(sampleRate)
+    }
+
     func reset() {
         samples.removeAll()
         droppedSamples = 0
+        anchored = false
     }
 }
 
@@ -218,9 +229,10 @@ class TranscriptionEngine: ObservableObject {
     /// Exposed so the enrollment UI can share the same loaded embedder instance.
     var publicSpeakerEmbedder: SpeakerEmbedder { speakerEmbedder }
     private lazy var hybridDiarizer = HybridDiarizer(embedder: speakerEmbedder)
-    // Long-lived audio buffer indexed by stream-relative time (seconds since
-    // STT provider start). Used to slice per-run audio for embedding override.
+    // Long-lived audio buffer indexed by Deepgram-relative time (zero = first
+    // audio buffer successfully sent to the provider).
     private let streamAudioBuffer = StreamAudioBuffer()
+    private var didAnchorStreamBuffer = false
 
     // Audio buffer queue - prevents race conditions without blocking audio thread
     private let audioBufferQueue = AudioBufferQueue()
@@ -366,9 +378,14 @@ class TranscriptionEngine: ObservableObject {
         let runsWithTiming = runs
         Task { [weak self] in
             guard let self = self else { return }
+            let totalBuffered = await self.streamAudioBuffer.totalBufferedSeconds()
+            HybridDiagLog.shared.write("--- new diarized final: \(runsWithTiming.count) runs, buffer=\(String(format: "%.2f", totalBuffered))s ---")
             var withAudio: [DiarizedRunWithAudio] = []
             for run in runsWithTiming {
                 let samples = await self.streamAudioBuffer.slice(startSec: run.startSec, endSec: run.endSec)
+                let gotSec = Double(samples.count) / 16000.0
+                let askSec = run.endSec - run.startSec
+                HybridDiagLog.shared.write("  run dgId=\(run.speakerId) ask=[\(String(format: "%.2f", run.startSec))→\(String(format: "%.2f", run.endSec))] askDur=\(String(format: "%.2f", askSec))s gotSamples=\(samples.count) gotDur=\(String(format: "%.2f", gotSec))s text='\(run.text.prefix(60))'")
                 withAudio.append(DiarizedRunWithAudio(
                     deepgramSpeakerId: run.speakerId,
                     text: run.text,
@@ -496,6 +513,8 @@ class TranscriptionEngine: ObservableObject {
     func stopCapture() {
         audioEngine?.stop()
         status = .ready
+        didAnchorStreamBuffer = false
+        Task { await streamAudioBuffer.reset() }
         log("Listening stopped")
     }
 
@@ -626,8 +645,13 @@ class TranscriptionEngine: ObservableObject {
                         // not just after isSpeaking flag is set (which happens after first partial arrives)
                         await self.audioChunkBuffer?.append(buffer)
 
-                        // Hybrid diarizer needs a long-lived stream-time-indexed buffer
-                        // so it can slice audio matching Deepgram's word-level timestamps.
+                        // Anchor the stream buffer to Deepgram's t=0 (the moment the
+                        // first audio chunk was successfully sent). Then append.
+                        if !self.didAnchorStreamBuffer {
+                            self.didAnchorStreamBuffer = true
+                            await self.streamAudioBuffer.anchor()
+                            HybridDiagLog.shared.write("StreamAudioBuffer anchored — first audio sent to Deepgram")
+                        }
                         await self.streamAudioBuffer.append(buffer)
                     } catch {
                         log("STT process error: \(error.localizedDescription)")

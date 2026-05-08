@@ -82,8 +82,16 @@ actor HybridDiarizer {
                 }
             }
 
+            // Distances against ALL enrolled — useful for debugging flips.
+            let allDistances = enrolled.map { e -> String in
+                let d = SpeakerEmbedder.cosineDistance(embedding, e.embedding)
+                return String(format: "%@=%.3f", e.name, d)
+            }.joined(separator: " ")
+
             if let best = best, best.distance <= threshold {
-                log("HybridDiarizer: OVERRIDE run dgId=\(run.deepgramSpeakerId) -> '\(best.speaker.name)' (distance=\(String(format: "%.3f", best.distance))) — '\(run.text.prefix(40))'")
+                let msg = "OVERRIDE dgId=\(run.deepgramSpeakerId) -> '\(best.speaker.name)' (distance=\(String(format: "%.3f", best.distance))) [\(allDistances)] runDur=\(String(format: "%.2f", durationSec))s text='\(run.text.prefix(60))'"
+                log("HybridDiarizer: \(msg)")
+                HybridDiagLog.shared.write(msg)
                 out.append(OverriddenRun(
                     deepgramSpeakerId: run.deepgramSpeakerId,
                     text: run.text,
@@ -92,7 +100,9 @@ actor HybridDiarizer {
                 ))
             } else {
                 let bestStr = best.map { String(format: "%.3f→%@", $0.distance, $0.speaker.name) } ?? "none"
-                log("HybridDiarizer: KEEP dgId=\(run.deepgramSpeakerId) (best=\(bestStr), threshold=\(threshold)) — '\(run.text.prefix(40))'")
+                let msg = "KEEP dgId=\(run.deepgramSpeakerId) (best=\(bestStr), threshold=\(threshold)) [\(allDistances)] runDur=\(String(format: "%.2f", durationSec))s text='\(run.text.prefix(60))'"
+                log("HybridDiarizer: \(msg)")
+                HybridDiagLog.shared.write(msg)
                 out.append(OverriddenRun(
                     deepgramSpeakerId: run.deepgramSpeakerId,
                     text: run.text,
