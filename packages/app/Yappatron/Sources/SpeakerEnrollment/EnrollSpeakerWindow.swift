@@ -10,11 +10,39 @@ final class EnrollSpeakerCoordinator {
 
     private var window: NSWindow?
 
+    /// Movie/TV quotes around 10 seconds of natural reading length. Picked at
+    /// random for the enrollment prompt so the user has something to read
+    /// instead of fumbling for filler.
+    private static let enrollmentQuotes: [String] = [
+        "Frankly, my dear, I don't give a damn. After all, tomorrow is another day.",
+        "I'm gonna make him an offer he can't refuse. We'll meet at the restaurant on Tuesday.",
+        "May the Force be with you, always. The Force will be with you, even when you cannot see it.",
+        "Houston, we have a problem. The main bus B undervolt is reading off the charts.",
+        "You can't handle the truth! Son, we live in a world that has walls.",
+        "Life is like a box of chocolates. You never know what you're gonna get on any given day.",
+        "Here's looking at you, kid. We'll always have Paris, no matter where life takes us.",
+        "I'll be back. And when I return, the future will be a very different place.",
+        "Show me the money! Help me help you, and we'll do great things together.",
+        "To infinity and beyond! There's a snake in my boot, and I think we should probably do something about that.",
+        "Why so serious? Let's put a smile on that face. The world deserves a little chaos now and then.",
+        "I see dead people. They walk around like regular people, they don't see each other, they only see what they want to see.",
+        "Just keep swimming, just keep swimming. What do we do? We swim, swim, swim.",
+        "There's no place like home. There's no place like home, if I ever go looking for my heart's desire."
+    ]
+
     func enroll(suggestedName: String, embedder: SpeakerEmbedder, onDone: @escaping (Result<EnrolledSpeaker, Error>) -> Void) {
+        let quote = Self.enrollmentQuotes.randomElement() ?? ""
+
         // Prompt for a name first.
         let alert = NSAlert()
         alert.messageText = "Enroll a speaker"
-        alert.informativeText = "Speak naturally for 10 seconds after pressing Start. We'll capture your voiceprint locally."
+        alert.informativeText = """
+        Speak naturally for 10 seconds after pressing Start. We'll capture your voiceprint locally.
+
+        Stuck for what to say? Try reading this:
+
+        \(quote)
+        """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Start")
         alert.addButton(withTitle: "Cancel")
@@ -29,7 +57,7 @@ final class EnrollSpeakerCoordinator {
         let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
 
-        showRecordingWindow(name: name)
+        showRecordingWindow(name: name, quote: quote)
 
         Task {
             do {
@@ -58,15 +86,15 @@ final class EnrollSpeakerCoordinator {
         }
     }
 
-    private func showRecordingWindow(name: String) {
-        let view = RecordingView(name: name, totalDuration: EnrollmentRecorder.defaultDuration)
+    private func showRecordingWindow(name: String, quote: String) {
+        let view = RecordingView(name: name, quote: quote, totalDuration: EnrollmentRecorder.defaultDuration)
         let hosting = NSHostingController(rootView: view)
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled]
         window.title = "Enrolling \(name)…"
         window.isReleasedWhenClosed = false
         window.level = .floating
-        window.setContentSize(NSSize(width: 320, height: 100))
+        window.setContentSize(NSSize(width: 420, height: 180))
         window.center()
         window.makeKeyAndOrderFront(nil)
         self.window = window
@@ -80,6 +108,7 @@ final class EnrollSpeakerCoordinator {
 
 private struct RecordingView: View {
     let name: String
+    let quote: String
     let totalDuration: TimeInterval
     @State private var progress: Double = 0
 
@@ -89,9 +118,19 @@ private struct RecordingView: View {
                 .font(.headline)
             ProgressView(value: progress)
                 .progressViewStyle(.linear)
-            Text("Speak naturally for \(Int(totalDuration)) seconds…")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if !quote.isEmpty {
+                Text("Read this aloud:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(quote)
+                    .font(.body)
+                    .italic()
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Speak naturally for \(Int(totalDuration)) seconds…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding()
         .onAppear {
