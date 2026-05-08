@@ -26,6 +26,18 @@ Pairs naturally with the broader "build this into the agent product" plan — on
    - We bumped the dep and updated the two API call sites; release builds clean but local mode hasn't been smoke-tested under the new version
    - Quick verification: enable Local backend, dictate, confirm transcript is correct
 
+3. **Model currency check (research done 2026-05-08)** — P1
+   - Currently using `StreamingEouAsrManager` with `parakeetEou320` (EOU 120M). FluidAudio 0.14.4 we're on is itself current.
+   - Available upgrades within FluidAudio (no dep bump needed):
+     - `StreamingNemotronAsrManager` — NVIDIA Nemotron streaming with encoder cache, 160/320/1600ms chunks. New in 0.13.7. Likely a measurable upgrade in latency / accuracy for English dictation.
+     - `SlidingWindowAsrManager` — overlap+cancellation, smoother chunk boundaries.
+   - Outside FluidAudio:
+     - NVIDIA `parakeet-unified-en-0.6b` (April 2026) — single English model for both offline + streaming with 160ms minimum latency, native punctuation/caps. SOTA fit for dictation; needs CoreML port if not yet wrapped.
+     - Moonshine v2 Medium Streaming (Feb 2026) — 107ms latency CPU-only, 26-34MB. Lightweight but less accurate than Parakeet.
+     - Apple SpeechAnalyzer / SpeechTranscriber (macOS 26 Tahoe) — "55% faster than Whisper" per Apple, fully on-device, zero deps. Worth a third-backend slot.
+   - Suggested first move: drop in `StreamingNemotronAsrManager` as the local backend, A/B against current `StreamingEouAsrManager`. Same package, same install path.
+   - WhisperKit is no longer competitive for sub-300ms streaming on Apple Silicon (Parakeet is 2–3x faster).
+
 3. **Ensemble diarization** — P2
    - Deepgram + local segmentation as parallel signals, vote per word
    - Local identity (FluidAudio embedding) remains the source of truth for who

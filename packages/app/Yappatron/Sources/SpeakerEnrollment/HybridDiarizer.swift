@@ -31,8 +31,11 @@ actor HybridDiarizer {
     var threshold: Float = 0.45
 
     /// Minimum audio duration (seconds) to bother running embedding on.
-    /// Below this, embeddings are too noisy to trust — keep Deepgram's ID.
-    var minRunSeconds: Float = 0.3
+    /// 0 = always run override; never fall through to Deepgram's IDs based on
+    /// duration alone. Embeddings on very short audio are noisier but Deepgram's
+    /// short-utterance IDs proved less trustworthy than letting the embedding
+    /// pass make the call (even if marginal).
+    var minRunSeconds: Float = 0.0
 
     private let sampleRate: Float = 16000
 

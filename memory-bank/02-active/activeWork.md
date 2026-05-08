@@ -68,6 +68,14 @@ Native iOS project at `packages/ios/YappatronIOS` still installed on test iPhone
 
 See "Current Focus" above. Open design questions to be resolved before implementation.
 
+### Model currency
+
+Research done 2026-05-08. We're on FluidAudio 0.14.4 (current as of 2026-05-04) but using its older `StreamingEouAsrManager` (Parakeet EOU 120M). The same package now exposes `StreamingNemotronAsrManager` (NVIDIA Nemotron streaming with encoder cache, 160ms chunks) which is likely a meaningful upgrade for English dictation latency. NVIDIA also released `parakeet-unified-en-0.6b` in April 2026 — SOTA English fit, needs CoreML port if not yet wrapped. Apple's SpeechAnalyzer in macOS 26 Tahoe is a viable third backend slot. Lowest-effort upgrade: drop in `StreamingNemotronAsrManager` and A/B against current. Captured in nextUp.
+
+### Hybrid diarization tunable: `minRunSeconds = 0.0`
+
+Lowered the gating threshold to zero so every run gets the embedding override pass regardless of duration. Previously runs under 0.3s fell through to Deepgram's IDs, which proved less reliable than even noisy short-audio embeddings. Tradeoff is more variance on tiny utterances ("art", "yeah") but no more silent fallback to Deepgram on short runs.
+
 ### Other Backlog
 
 - [ ] Auto-clear speaker rename map on new transcription session (Mom's foot-gun risk: yesterday's Mom can become today's Callie if reused)
