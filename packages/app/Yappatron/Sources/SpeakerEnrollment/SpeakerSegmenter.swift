@@ -108,11 +108,13 @@ actor SpeakerSegmenter {
 
     /// Look up which speaker was active at a given timestamp. Returns the
     /// enrolled name if matched, else falls back to a "Speaker N" label
-    /// derived from the diarizer's internal speaker ID. Returns nil if we
-    /// have no segment covering that time (should be rare after anchor).
+    /// derived from the diarizer's internal speaker ID. Always returns
+    /// something useful when at least one segment exists (closest-segment
+    /// fallback is unbounded).
     func speakerLabel(atSec t: Double, fallbackPrefix: String = "Speaker") -> String? {
-        // Find the segment whose [start, end] contains t. If multiple overlap,
-        // prefer the one with the closer start.
+        guard !segments.isEmpty else { return nil }
+
+        // Exact containment first.
         var bestSeg: LocalSpeakerSegment?
         for seg in segments {
             if t >= seg.startSec, t <= seg.endSec {
@@ -121,16 +123,16 @@ actor SpeakerSegmenter {
                 }
             }
         }
-        // If no exact match, take the closest segment whose end is just before t,
-        // up to 0.5s away. Helps with off-by-rounding cases at boundaries.
+        // Fallback: closest segment by either boundary, no distance cap.
+        // Diarization segments only cover speech, so words asked about during
+        // silence/transition will fall outside any segment — pick the nearest
+        // one rather than emitting "Speaker ?".
         if bestSeg == nil {
             var nearest: (LocalSpeakerSegment, Double)?
             for seg in segments {
                 let dist = min(abs(t - seg.startSec), abs(t - seg.endSec))
-                if dist < 0.5 {
-                    if nearest == nil || dist < nearest!.1 {
-                        nearest = (seg, dist)
-                    }
+                if nearest == nil || dist < nearest!.1 {
+                    nearest = (seg, dist)
                 }
             }
             bestSeg = nearest?.0
