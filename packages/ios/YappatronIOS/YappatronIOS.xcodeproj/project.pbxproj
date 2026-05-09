@@ -19,6 +19,9 @@
 		A00000000000000000000410 /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000309 /* KeyboardViewController.swift */; };
 		A00000000000000000000411 /* YappatronKeyboard.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A00000000000000000000201 /* YappatronKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A00000000000000000000412 /* LocalSpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000314 /* LocalSpeechRecognizer.swift */; };
+		A00000000000000000000413 /* DiarizedUtterance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000315 /* DiarizedUtterance.swift */; };
+		A00000000000000000000414 /* SpeakerLabelStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000316 /* SpeakerLabelStore.swift */; };
+		A00000000000000000000415 /* WebhookClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000317 /* WebhookClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +63,9 @@
 		A00000000000000000000310 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A00000000000000000000311 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A00000000000000000000314 /* LocalSpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSpeechRecognizer.swift; sourceTree = "<group>"; };
+		A00000000000000000000315 /* DiarizedUtterance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiarizedUtterance.swift; sourceTree = "<group>"; };
+		A00000000000000000000316 /* SpeakerLabelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerLabelStore.swift; sourceTree = "<group>"; };
+		A00000000000000000000317 /* WebhookClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebhookClient.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -109,6 +115,9 @@
 				A00000000000000000000304 /* AudioCaptureManager.swift */,
 				A00000000000000000000314 /* LocalSpeechRecognizer.swift */,
 				A00000000000000000000305 /* DeepgramStreamingClient.swift */,
+				A00000000000000000000315 /* DiarizedUtterance.swift */,
+				A00000000000000000000316 /* SpeakerLabelStore.swift */,
+				A00000000000000000000317 /* WebhookClient.swift */,
 				A00000000000000000000306 /* KeychainStore.swift */,
 				A00000000000000000000310 /* Info.plist */,
 			);
@@ -237,6 +246,9 @@
 				A00000000000000000000404 /* AudioCaptureManager.swift in Sources */,
 				A00000000000000000000412 /* LocalSpeechRecognizer.swift in Sources */,
 				A00000000000000000000405 /* DeepgramStreamingClient.swift in Sources */,
+				A00000000000000000000413 /* DiarizedUtterance.swift in Sources */,
+				A00000000000000000000414 /* SpeakerLabelStore.swift in Sources */,
+				A00000000000000000000415 /* WebhookClient.swift in Sources */,
 				A00000000000000000000406 /* KeychainStore.swift in Sources */,
 				A00000000000000000000407 /* SharedTranscriptStore.swift in Sources */,
 			);

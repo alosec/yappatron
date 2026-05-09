@@ -25,6 +25,7 @@ final class DeepgramStreamingClient: NSObject {
         struct Channel: Decodable {
             struct Alternative: Decodable {
                 let transcript: String
+                let words: [DiarizedWord]?
             }
 
             let alternatives: [Alternative]
@@ -32,12 +33,18 @@ final class DeepgramStreamingClient: NSObject {
 
         let type: String?
         let channel: Channel?
+        let start: Double?
+        let duration: Double?
         let is_final: Bool?
         let from_finalize: Bool?
         let message: String?
     }
 
     var onTranscript: ((String, Bool) -> Void)?
+    /// Called once per `is_final` turn with diarized runs aggregated from the
+    /// word-level Deepgram payload. Empty array if Deepgram didn't return word
+    /// data (e.g. diarize disabled or short interim).
+    var onDiarizedFinal: (([DiarizedRun]) -> Void)?
     var onError: ((String) -> Void)?
 
     private let apiKey: String
@@ -66,6 +73,7 @@ final class DeepgramStreamingClient: NSObject {
             URLQueryItem(name: "punctuate", value: "true"),
             URLQueryItem(name: "smart_format", value: "true"),
             URLQueryItem(name: "interim_results", value: "true"),
+            URLQueryItem(name: "diarize", value: "true"),
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
             URLQueryItem(name: "channels", value: "1"),
@@ -204,14 +212,27 @@ final class DeepgramStreamingClient: NSObject {
     }
 
     private func handleResults(_ message: Message) {
-        guard let transcript = message.channel?.alternatives.first?.transcript,
-              !transcript.isEmpty else {
+        guard let alternative = message.channel?.alternatives.first,
+              !alternative.transcript.isEmpty else {
             return
         }
+        let transcript = alternative.transcript
 
         if message.is_final == true {
             latestInterim = ""
             finalSegments.append(transcript)
+
+            // Diarized runs (one finalized turn → 1+ runs depending on whether
+            // the speaker changed mid-turn). Surfaced through onDiarizedFinal
+            // so the caller can post per-run if desired.
+            if let words = alternative.words, !words.isEmpty {
+                let runs = words.intoRuns()
+                let onDiarized = self.onDiarizedFinal
+                DispatchQueue.main.async {
+                    onDiarized?(runs)
+                }
+            }
+
             publishTranscript(isFinal: message.from_finalize == true)
         } else {
             latestInterim = transcript

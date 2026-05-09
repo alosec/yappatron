@@ -10,6 +10,10 @@ struct ContentView: View {
                     backendSection
                     if viewModel.usesDeepgram {
                         apiKeySection
+                        webhookSection
+                        if !viewModel.speakerLabels.seenIDs.isEmpty {
+                            speakersSection
+                        }
                     }
                     recorderSection
                     transcriptSection
@@ -71,6 +75,83 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .accessibilityLabel("Save API key")
             }
+        }
+    }
+
+    private var webhookSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Webhook Streaming")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("https://tinyfat.sh/ingest", text: $viewModel.webhookURL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .padding(.horizontal, 12)
+                    .frame(height: 44)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                SecureField("Bearer token (optional)", text: $viewModel.webhookToken)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .padding(.horizontal, 12)
+                    .frame(height: 44)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                Toggle(isOn: $viewModel.streamToWebhook) {
+                    Label("Stream finals to webhook", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .toggleStyle(.switch)
+                .disabled(viewModel.webhookURL.isEmpty)
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                if viewModel.webhookPostsSucceeded > 0 || viewModel.webhookPostsFailed > 0 {
+                    HStack(spacing: 14) {
+                        Label("\(viewModel.webhookPostsSucceeded)", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Label("\(viewModel.webhookPostsFailed)", systemImage: "xmark.octagon.fill")
+                            .foregroundStyle(.red)
+                    }
+                    .font(.footnote.weight(.medium))
+                }
+
+                if let error = viewModel.lastWebhookError {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
+    private var speakersSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Name Speakers")
+                .font(.headline)
+
+            VStack(spacing: 0) {
+                ForEach(viewModel.speakerLabels.seenIDs, id: \.self) { id in
+                    SpeakerRenameRow(
+                        speakerID: id,
+                        currentName: viewModel.speakerLabels.name(for: id),
+                        onSave: { newName in
+                            viewModel.speakerLabels.setName(newName, for: id)
+                            // Force a publish so dependent views refresh.
+                            viewModel.objectWillChange.send()
+                        }
+                    )
+                    if id != viewModel.speakerLabels.seenIDs.last {
+                        Divider().padding(.leading, 14)
+                    }
+                }
+            }
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -189,6 +270,49 @@ struct ContentView: View {
 
     private var recordButtonTitle: String {
         viewModel.isRecording ? "Stop" : "Record"
+    }
+}
+
+private struct SpeakerRenameRow: View {
+    let speakerID: Int
+    let currentName: String
+    let onSave: (String) -> Void
+
+    @State private var draft: String = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("Speaker \(speakerID)")
+                .font(.subheadline.weight(.semibold))
+                .frame(width: 88, alignment: .leading)
+
+            TextField(currentName, text: $draft)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+                .submitLabel(.done)
+                .focused($focused)
+                .onSubmit {
+                    onSave(draft)
+                    focused = false
+                }
+                .onAppear {
+                    if draft.isEmpty && !currentName.hasPrefix("Speaker ") {
+                        draft = currentName
+                    }
+                }
+
+            Button {
+                onSave(draft)
+                focused = false
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+            }
+            .buttonStyle(.plain)
+            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 }
 
