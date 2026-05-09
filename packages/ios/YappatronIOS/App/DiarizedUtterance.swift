@@ -20,7 +20,7 @@ struct TranscriptOutputSettings {
     let streamToWebhook: Bool
     let webhookURL: String
     let webhookToken: String
-    let sendToKeyboard: Bool
+    let autoInsertOnKeyboardOpen: Bool
     let pressReturnAfterSend: Bool
 }
 
@@ -65,13 +65,14 @@ enum TranscriptOutputRouter {
     ) -> [TranscriptOutputEvent] {
         var events: [TranscriptOutputEvent] = []
 
-        if settings.sendToKeyboard {
-            sharedStore.saveTranscript(utterance.text)
+        sharedStore.saveTranscript(utterance.text)
+
+        if settings.autoInsertOnKeyboardOpen {
             events.append(TranscriptOutputEvent(
                 destination: .keyboard,
                 status: .queued,
                 text: utterance.text,
-                detail: "Ready for auto-insert"
+                detail: "Keyboard will insert this chunk"
             ))
 
             if settings.pressReturnAfterSend {

@@ -45,7 +45,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func configureView() {
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = .systemGray5
 
         transcriptLabel.font = .preferredFont(forTextStyle: .callout)
         transcriptLabel.numberOfLines = 3
@@ -100,7 +100,7 @@ final class KeyboardViewController: UIInputViewController {
         let text = latestTranscript.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if text.isEmpty {
-            transcriptLabel.text = "Waiting for Yappatron."
+            transcriptLabel.text = "Waiting for Yappatron"
         } else if latestTranscript.pressReturnAfterInsert {
             transcriptLabel.text = "\(text)\n↵"
         } else {

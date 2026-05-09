@@ -52,3 +52,16 @@ iOS still owns the hard platform limitation: custom keyboards cannot record audi
 3. Use the Yappatron keyboard as the insertion surface.
 
 The change here makes that flow feel more automatic: the app keeps delivering chunks, and the keyboard keeps consuming them while it remains visible.
+
+## Immediate UX Correction
+
+First device test showed two regressions:
+
+- The keyboard stayed on "Waiting for Yappatron" if keyboard auto-insert was off, because delivery to the keyboard pasteboard was incorrectly gated by the auto-insert setting.
+- The main app rendered too many "Queued" event rows, making the screen feel noisy and debug-like.
+
+Follow-up fix:
+
+- Every delivered chunk is now published for the keyboard. Auto-insert only controls whether the keyboard inserts automatically.
+- The app no longer shows the verbose output event feed.
+- Keyboard background changed from the default dark system background to system gray.

@@ -170,7 +170,9 @@ final class DictationViewModel: ObservableObject {
             labels.append("Webhook")
         }
         if autoInsertOnKeyboardOpen {
-            labels.append("Keyboard")
+            labels.append("Keyboard auto")
+        } else {
+            labels.append("Keyboard ready")
         }
         if pressReturnAfterSend {
             labels.append("Return")
@@ -179,7 +181,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     var hasRunnableOutput: Bool {
-        autoInsertOnKeyboardOpen || (streamToWebhook && !webhookURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        true
     }
 
     var recordButtonTitle: String {
@@ -449,7 +451,7 @@ final class DictationViewModel: ObservableObject {
                 streamToWebhook: streamToWebhook,
                 webhookURL: webhookURL,
                 webhookToken: webhookToken,
-                sendToKeyboard: autoInsertOnKeyboardOpen,
+                autoInsertOnKeyboardOpen: autoInsertOnKeyboardOpen,
                 pressReturnAfterSend: pressReturnAfterSend
             ),
             sharedStore: sharedStore,

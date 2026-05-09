@@ -229,19 +229,6 @@ struct ContentView: View {
             }
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.secondary)
-
-            if !viewModel.outputEvents.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(viewModel.outputEvents) { event in
-                        OutputEventRow(event: event)
-                        if event.id != viewModel.outputEvents.last?.id {
-                            Divider().padding(.leading, 42)
-                        }
-                    }
-                }
-                .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
         }
         .padding(16)
         .background(Color(.systemBackground))
@@ -306,57 +293,6 @@ struct ContentView: View {
 
     private var recordButtonColor: Color {
         viewModel.isRecording ? .red : .blue
-    }
-}
-
-private struct OutputEventRow: View {
-    let event: TranscriptOutputEvent
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: event.destination.symbolName)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(color)
-                .frame(width: 22)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(event.destination.rawValue)
-                        .font(.subheadline.weight(.semibold))
-                    Text(event.status.rawValue)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(color)
-                    Spacer()
-                    Text(event.timestamp.formatted(date: .omitted, time: .shortened))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                Text(event.text)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-
-                if let detail = event.detail {
-                    Text(detail)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-    }
-
-    private var color: Color {
-        switch event.status {
-        case .queued:
-            return .blue
-        case .sent:
-            return .green
-        case .failed:
-            return .red
-        }
     }
 }
 
