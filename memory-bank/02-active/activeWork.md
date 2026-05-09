@@ -52,6 +52,34 @@ Native iOS project at `packages/ios/YappatronIOS` still installed on test iPhone
 
 ## What's Done This Session
 
+### Live call test (2026-05-08, late evening)
+
+Tested the system-audio-capture build against an actual FaceTime
+call. Result: not just the documented "ScreenCaptureKit can't see
+FaceTime's audio" issue — **FaceTime appears to hijack the mic input
+device entirely while the call is active.** With Yappatron running
+and a FaceTime call up, the orb never appeared and no transcription
+occurred at all, even though the app was running and the mic
+permission was granted. The mic input itself was being claimed by
+FaceTime in a way that left Yappatron with no signal to process.
+
+Operational fallout for tomorrow's Callie call (Sat May 9, 11am):
+
+- FaceTime is out as the call mechanism for any session where
+  Yappatron is in the loop. Will use **Zoom or Google Meet** instead.
+- Whether the dedicated Screen Sharing app (the one that allows
+  remote control, separate from FaceTime's built-in screen share)
+  has the same mic-hijack problem is **not yet tested.**
+- Browser-based meeting tools (Google Meet in Chrome) are the most
+  likely path to "Yappatron + call audio + remote viewing all work
+  at once," because the system-audio capture spike showed browser
+  audio captures cleanly. Worth validating before the call.
+
+This is a meaningful posture change: the previous assumption was
+"FaceTime is degraded for system-audio capture." The actual
+behavior is "FaceTime is incompatible with Yappatron entirely while
+active." Document and route around it.
+
 ### Line break simplification (2026-05-08, evening)
 
 Stripped the `LineBreakStyle` enum entirely. Inline (no break) was a

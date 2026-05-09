@@ -160,3 +160,32 @@ If Deepgram-only-segmentation + local-only-identity isn't enough for harder real
 - Ensemble diarization (Deepgram + local segmentation, local identity) for hardening hard-mode quality
 - Address backspacing UX
 - System audio capture: investigate FaceTime-specific path. Likely requires either an audio HAL driver, an AudioServerPlugin, or accepting that FaceTime is unreachable without Apple cooperation. Acceptable to start by making the Zoom path actually clean (de-duplicate the mic-vs-system-audio overlap that's ruining accuracy + diarization).
+
+## Live Call Re-Test (2026-05-08, late, post-ship)
+
+Re-tested with the experimental capture toggle on against a real
+FaceTime call. Beyond the previously documented "ScreenCaptureKit
+doesn't see FaceTime audio" finding, observed a stronger problem:
+**Yappatron gets no mic signal at all while a FaceTime call is
+active.** The orb never appeared, no transcription occurred, the
+permissions were all in place, but the mic input itself was claimed
+by FaceTime exclusively. This is a device-level conflict, not a
+capture-routing one.
+
+Practical implications:
+- For any workflow where Yappatron needs to listen during a call,
+  FaceTime must be avoided entirely. Cannot work around with a
+  better capture path because we don't even have a mic stream.
+- Zoom and Google Meet do not exhibit this — the original spike
+  showed Zoom captures both sides (with the doubled-audio quality
+  hit), and browser-based Google Meet is the most likely path to a
+  clean Yappatron-during-call experience because browser audio was
+  the cleanest result of the spike.
+- Untested: dedicated remote-control screen sharing apps (the kind
+  that allow remote control, distinct from FaceTime's built-in
+  share). Unknown whether they exhibit the same mic-claim behavior.
+
+This finding upgrades the FaceTime followup from "investigate
+capture path" to "FaceTime is fundamentally incompatible with
+Yappatron's operating model and may stay that way without
+Apple-blessed APIs." Document, route around, do not block on.
