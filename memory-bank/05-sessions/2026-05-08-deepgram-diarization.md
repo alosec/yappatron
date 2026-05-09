@@ -109,6 +109,37 @@ Diarization quality degrades but is recoverable:
 2. **Cross-speaker contamination.** Significantly improved by the override layer — when Deepgram tags Mom's words with Alex's ID, the embedding match correctly attributes them to Mom. Failure modes that remain: short ambiguous runs where neither voiceprint matches confidently (kept Deepgram's ID), and overlapping speech where the audio slice contains both voices.
 3. **Phantom speakers from overlap.** Brief simultaneous speech still produces phantom IDs. Override declines low-confidence matches rather than guessing wrong; cost is `[Speaker 3]`-style labels showing up occasionally.
 
+## System Audio Capture Spike (2026-05-08, late)
+
+Tried two paths to capture both sides of a video call into Yappatron without requiring users to install third-party audio drivers.
+
+### Path A: BlackHole + Multi-Output (third-party kernel driver)
+
+Installed `blackhole-2ch` via Homebrew, configured a Multi-Output Device (MBA Speakers + BlackHole 2ch) and an Aggregate Device (BlackHole 2ch + Mac mic). YouTube playback routed correctly. **FaceTime ignored the Multi-Output Device entirely** — uses Apple's private CoreAudio path, audio never reached BlackHole. Quitting and relaunching FaceTime didn't help. Google Meet had the inverse problem: Yappatron heard mom but mom couldn't hear me through the Multi-Output. Zoom worked best of the three but still wasn't clean.
+
+### Path B: ScreenCaptureKit native capture (built into Yappatron)
+
+Built three new types under `Sources/AudioCapture/`:
+- `AudioCaptureSource` protocol (16kHz mono Float32 buffers)
+- `MicAudioSource` — refactored existing AVAudioEngine path
+- `SystemAudioSource` — `SCStream` with `capturesAudio=true` and `excludesCurrentProcessAudio=true`, downsamples 48kHz stereo → 16kHz mono via AVAudioConverter
+- `MixedAudioSource` — runs both, ring-buffers each side, emits 10ms mixed chunks at 0.8 gain per side with clamping
+
+Wired into `TranscriptionEngine` behind a `captureSystemAudio` UserDefaults toggle, restart-required. Added `NSScreenCaptureUsageDescription` to Info.plist. Menu toggle gated under "Capture System Audio (Experimental)" with a one-time alert listing known limitations.
+
+### Results
+
+- **YouTube/browser playback:** transcribes cleanly. The path works.
+- **Zoom call:** Yappatron sees both sides BUT transcription accuracy is significantly degraded and diarization gets the speakers backwards. Likely cause: mic captures the routed-through-speakers audio in addition to system capture, so each side appears twice (with delay) in the mixed stream. Embeddings extracted from doubled audio aren't reliable.
+- **FaceTime call:** Yappatron didn't register the user's input at all. ScreenCaptureKit's audio path appears to skip FaceTime entirely on macOS — same private-audio-path issue that broke BlackHole. Worst of the three.
+- **Phone-as-mic-routing workaround:** can route through phone mic for non-FaceTime calls, but Yappatron-running-during-FaceTime still sees nothing.
+
+### Conclusion (this session)
+
+System audio capture is shippable for YouTube-style use cases but not currently a reliable solution for live video calls. FaceTime in particular is a hard nope without deeper Apple-specific engineering (or shipping a kernel-level audio driver, which is the same problem we were trying to avoid).
+
+Marked the toggle "(Experimental)" in the menu and added explicit failure-mode documentation to the enable-confirmation alert. The feature stays in the codebase as a foundation for future iteration; it's not removed.
+
 ## Identified Followup Architecture: Ensemble
 
 If Deepgram-only-segmentation + local-only-identity isn't enough for harder real-world conditions, the next architectural step is an **ensemble**: use Deepgram's word-level boundaries as one signal, FluidAudio's segment boundaries as another, vote per word. Cost: continuous local diarization in real time. Benefit: corrected segmentation when Deepgram misses a mid-sentence speaker change. Not implemented; on the followup list.
@@ -128,3 +159,4 @@ If Deepgram-only-segmentation + local-only-identity isn't enough for harder real
 - Retroactive rename rewriting of already-typed transcript (open question whether this is worth the engineering)
 - Ensemble diarization (Deepgram + local segmentation, local identity) for hardening hard-mode quality
 - Address backspacing UX
+- System audio capture: investigate FaceTime-specific path. Likely requires either an audio HAL driver, an AudioServerPlugin, or accepting that FaceTime is unreachable without Apple cooperation. Acceptable to start by making the Zoom path actually clean (de-duplicate the mic-vs-system-audio overlap that's ruining accuracy + diarization).

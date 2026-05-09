@@ -395,7 +395,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         menu.addItem(enterItem)
 
         // Capture system audio (FaceTime, Zoom, browser, etc.) via ScreenCaptureKit
-        let systemAudioItem = NSMenuItem(title: "Capture System Audio (FaceTime/Zoom/etc)", action: #selector(toggleSystemAudioCapture), keyEquivalent: "")
+        let systemAudioItem = NSMenuItem(title: "Capture System Audio (Experimental)", action: #selector(toggleSystemAudioCapture), keyEquivalent: "")
         systemAudioItem.state = UserDefaults.standard.bool(forKey: "captureSystemAudio") ? .on : .off
         menu.addItem(systemAudioItem)
 
@@ -729,17 +729,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         UserDefaults.standard.set(newValue, forKey: key)
 
         let alert = NSAlert()
-        alert.messageText = newValue ? "System Audio Capture Enabled" : "System Audio Capture Disabled"
+        alert.messageText = newValue ? "System Audio Capture Enabled (Experimental)" : "System Audio Capture Disabled"
         if newValue {
             alert.informativeText = """
-            Yappatron will now capture both your microphone AND any audio playing on your Mac (FaceTime, Zoom, browser, etc.).
+            Yappatron will now mix the microphone with any audio playing on your Mac (FaceTime, Zoom, browser, etc.).
 
-            macOS will prompt for Screen Recording permission the first time this runs. Yappatron uses that permission only to capture system audio — no screen contents are recorded.
+            Known limitations as of 2026-05-08:
+            • FaceTime audio is not currently captured by ScreenCaptureKit on macOS, so this won't help with FaceTime calls.
+            • Zoom captures both sides but transcription accuracy and diarization quality both degrade noticeably (echo and double-counted audio appear to be the cause).
+            • Browser/YouTube playback works well.
 
-            Please quit and relaunch Yappatron for the change to take effect.
+            macOS will prompt for Screen Recording permission the first time this runs. Yappatron uses that permission only to capture audio — no screen contents are recorded.
+
+            Quit and relaunch Yappatron for the change to take effect.
             """
         } else {
-            alert.informativeText = "Yappatron will go back to capturing only the microphone. Please quit and relaunch Yappatron for the change to take effect."
+            alert.informativeText = "Yappatron will go back to capturing only the microphone. Quit and relaunch Yappatron for the change to take effect."
         }
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
