@@ -1,10 +1,21 @@
 # Active Work
 
-**Last Updated:** 2026-05-08
+**Last Updated:** 2026-05-09
 
 ## Current Focus
 
-**TOP PRIORITY: Input focus locking**
+**Spike paused. Recording the call instead.** The iOS webhook
+streaming pipeline (server + DNS + Caddy + iOS scaffolding) is
+shipped and infrastructure-ready, but the iPhone-side build/install
+loop on Friday night didn't converge into something usable in time
+for tomorrow's 11am Callie call. Right call: stop, sleep, just
+record the call with normal tools, post-process audio later.
+
+The infrastructure stays live (relay killed for the night, but DNS,
+Caddy entry, cert, and code all remain). Next session can pick this
+up with a clear head.
+
+**Earlier P0: Input focus locking**
 
 Yappatron currently types into whatever app/field has focus at the moment a final lands. For multi-speaker / meeting-mode use, the user often wants the transcript to flow into a *specific* destination (e.g., a Claude Code chat) regardless of where the cursor moves during the conversation. Right now, alt-tabbing or clicking another window mid-conversation splits the transcript across destinations.
 
@@ -108,9 +119,85 @@ proxied via Caddy on the box. Bearer token at
 
 End-to-end pipeline validated locally: `curl -X POST` → Bun server →
 tmux paste-buffer → text appears in target pane. Smoke-tested into
-this Claude Code session at `0:1.1` and into a scratch bash window at
-`1:1.1`. Ready for an iOS-end smoke test in the morning before the
-Callie call.
+the live Claude Code session at `0:1.1` and into a scratch bash
+window at `1:1.1`. Public HTTPS test from internet → Caddy → relay →
+tmux pane confirmed working before plug-in.
+
+### Tier 1 hardening shipped to relay (2026-05-09 ~00:30)
+
+Quick audit-then-harden pass on the relay before going to bed,
+because a static-bearer-token endpoint that pastes arbitrary text
+into a live Claude Code window is a real surface — anyone with the
+token can effectively talk to Claude as if they were the operator.
+Five additive controls, no UX cost:
+
+- Per-IP token bucket. Capacity 30 burst, refill 2/s sustained.
+  429s past the limit, audited.
+- Sanitize text + speaker fields. Strip C0 controls (incl. \\n \\r
+  \\t), DEL, C1 controls. Speech transcripts don't legitimately
+  contain control bytes; anything that does is suspicious.
+- Length caps: 2KB text, 64 char speaker, 8KB total body. Anything
+  larger returns 413 and is audited.
+- Authenticate `/health`. No public endpoint that confirms the
+  service is live or leaks the tmux target name.
+- Append-only audit log at
+  `~/.local/share/yapatron-relay/audit.jsonl` with timestamp, event
+  type, IP, and a sha256 prefix of pasted text (NOT plaintext) for
+  forensic traceability without storing conversation contents.
+
+Shipped as `d1736aa` on `alosec/yapatron-relay`. Each control was
+smoke-tested locally before commit.
+
+Tier 2 (HMAC body signing + nonce, replay-proof against token leak)
+and Tier 3 #12 (pivot from "paste into Claude Code" to "write to
+JSONL file, you tail it" — eliminates the remote-injection-into-AI
+surface entirely) are noted as future work, not shipped tonight.
+
+### iOS install + first-run friction (2026-05-09, late)
+
+Real attempt to install and use the spike on iPhone before the
+Friday→Saturday flip stalled out. The build/install/permissions/
+backgrounding loop didn't converge into a working ambient-recording
+experience inside the time window. No specific blocker captured in
+detail — too tired to debug carefully, and a Friday-night panic
+build is exactly the kind of thing that produces brittle work.
+
+Decision: park the iOS path cleanly. Tomorrow's Callie call will
+just use a normal recording (Voice Memos / Zoom built-in), post-hoc
+transcription later. The spike's foundation stays:
+
+- iOS app branch with `WebhookClient`, `SpeakerLabelStore`,
+  `DiarizedUtterance`, ContentView fields, Deepgram `diarize=true`
+- Public endpoint live at `https://tinyfat.sh/ingest`
+- Hardened relay, code committed, token in place
+- Caddy + DNS + cert all healthy
+
+Restart point on the next iteration:
+1. Reproduce the iOS build/install issue with rested eyes
+2. Validate ambient-listening behavior (background audio, mic claim
+   while another app is active, etc.) before adding any features
+3. Decide between continuing to harden the network/auth path
+   (Tier 2 HMAC) vs pivoting to Tier 3 #12 (file-based)
+
+### State at end of session (2026-05-09 ~00:35)
+
+- Relay process killed (`tmux kill-session -t relay`). Endpoint is
+  inert until restart — Caddy will 502 anything hitting `/ingest`.
+- DNS, Cloudflare zone, A record, Caddy block, Let's Encrypt cert
+  all remain healthy.
+- Bearer token still at `~/.config/yappatron/webhook-token` (mode
+  600). Not rotated; no leak suspected.
+- iOS code in `c91be75` (spike) + `4ac3ab1` (memory bank) on
+  `alosec/yappatron`.
+- Relay code in `934b085` (initial) + `d1736aa` (Tier 1 hardening)
+  on `alosec/yapatron-relay`.
+
+Restart command (when ready):
+
+```bash
+cd ~/code/yapatron-relay && \\
+  tmux new-session -d -s relay 'TMUX_TARGET=0:1.1 bun run server.ts'
+```
 
 ### Live call test (2026-05-08, late evening)
 
