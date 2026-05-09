@@ -52,6 +52,42 @@ Native iOS project at `packages/ios/YappatronIOS` still installed on test iPhone
 
 ## What's Done This Session
 
+### iOS webhook streaming spike (2026-05-08, very late)
+
+Shipped a "Stream finals to webhook" mode for the Deepgram backend on
+the iOS app, end-to-end:
+
+- `DeepgramStreamingClient` flips `diarize=true` and parses the
+  word-level array. Words aggregate into runs (one per speaker change
+  inside a finalized turn) via a new `intoRuns()` extension.
+- `WebhookClient` POSTs `DiarizedUtterance` JSON to a user-configured
+  URL with optional bearer token. One retry on 5xx/network error,
+  fail-fast on 4xx, ephemeral session.
+- `SpeakerLabelStore` (UserDefaults-backed) tracks seen Deepgram
+  speaker IDs and lets the user rename them inline. Renames flow into
+  the next webhook payload's `speaker` field.
+- `ContentView` adds Webhook URL field, bearer-token field, "Stream
+  finals to webhook" toggle, success/failure counters, and a "Name
+  Speakers" section that materializes once IDs are seen.
+- Voiceprint enrollment (FluidAudio) deliberately deferred. The Mac
+  has it; the iOS port doubles spike surface. Wire shape is validated
+  with Deepgram-IDs-only first.
+
+Server side: a separate `yapatron-relay` repo at `~/code/yapatron-relay`
+runs on `tiny-bat` and pastes `is_final=true` utterances into a target
+tmux pane. Bearer-authenticated, runs as `bun run server.ts` in tmux.
+
+Public endpoint: **`https://tinyfat.sh/ingest`** — the `tinyfat.sh`
+domain was migrated from Namecheap to Cloudflare DNS and reverse-
+proxied via Caddy on the box. Bearer token at
+`~/.config/yappatron/webhook-token` (mode 600).
+
+End-to-end pipeline validated locally: `curl -X POST` → Bun server →
+tmux paste-buffer → text appears in target pane. Smoke-tested into
+this Claude Code session at `0:1.1` and into a scratch bash window at
+`1:1.1`. Ready for an iOS-end smoke test in the morning before the
+Callie call.
+
 ### Live call test (2026-05-08, late evening)
 
 Tested the system-audio-capture build against an actual FaceTime
