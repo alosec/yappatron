@@ -9,7 +9,13 @@ final class KeyboardViewController: UIInputViewController {
     private let refreshButton = UIButton(type: .system)
     private let nextKeyboardButton = UIButton(type: .system)
 
-    private var latestTranscript = SharedTranscript(text: "", updatedAt: 0, autoInsertOnKeyboardOpen: false)
+    private var latestTranscript = SharedTranscript(
+        text: "",
+        updatedAt: 0,
+        autoInsertOnKeyboardOpen: false,
+        pressReturnAfterInsert: false
+    )
+    private var refreshTimer: Timer?
 
     private enum LocalKeys {
         static let lastAutoInsertedUpdatedAt = "lastAutoInsertedUpdatedAt"
@@ -25,6 +31,12 @@ final class KeyboardViewController: UIInputViewController {
         super.viewWillAppear(animated)
         refreshTranscript()
         autoInsertIfNeeded()
+        startRefreshing()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        stopRefreshing()
     }
 
     override func textDidChange(_ textInput: UITextInput?) {
@@ -45,7 +57,7 @@ final class KeyboardViewController: UIInputViewController {
         insertButton.configuration?.image = UIImage(systemName: "text.insert")
         insertButton.configuration?.imagePadding = 8
         insertButton.configuration?.title = "Insert"
-        insertButton.addTarget(self, action: #selector(insertLatestTranscript), for: .touchUpInside)
+        insertButton.addTarget(self, action: #selector(insertButtonTapped), for: .touchUpInside)
 
         refreshButton.configuration = .tinted()
         refreshButton.configuration?.image = UIImage(systemName: "arrow.clockwise")
@@ -87,7 +99,13 @@ final class KeyboardViewController: UIInputViewController {
         latestTranscript = transcriptStore.latestTranscriptForKeyboard()
         let text = latestTranscript.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        transcriptLabel.text = text.isEmpty ? "Open Yappatron to record." : text
+        if text.isEmpty {
+            transcriptLabel.text = "Waiting for Yappatron."
+        } else if latestTranscript.pressReturnAfterInsert {
+            transcriptLabel.text = "\(text)\n↵"
+        } else {
+            transcriptLabel.text = text
+        }
         transcriptLabel.textColor = text.isEmpty ? .secondaryLabel : .label
         insertButton.isEnabled = !text.isEmpty
     }
@@ -99,20 +117,50 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
 
-        insertLatestTranscript()
+        insertLatestTranscript(markAutoInserted: true)
         localDefaults.set(latestTranscript.updatedAt, forKey: LocalKeys.lastAutoInsertedUpdatedAt)
     }
 
-    @objc private func insertLatestTranscript() {
+    private func startRefreshing() {
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.refreshTranscript()
+            self.autoInsertIfNeeded()
+        }
+
+        if let refreshTimer {
+            RunLoop.main.add(refreshTimer, forMode: .common)
+        }
+    }
+
+    private func stopRefreshing() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+
+    private func insertLatestTranscript(markAutoInserted: Bool) {
         let text = latestTranscript.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return
         }
 
         textDocumentProxy.insertText(text)
+        if latestTranscript.pressReturnAfterInsert {
+            textDocumentProxy.insertText("\n")
+        }
+
+        if markAutoInserted {
+            localDefaults.set(latestTranscript.updatedAt, forKey: LocalKeys.lastAutoInsertedUpdatedAt)
+        }
+    }
+
+    @objc private func insertButtonTapped() {
+        insertLatestTranscript(markAutoInserted: false)
     }
 
     @objc private func refreshButtonTapped() {
         refreshTranscript()
+        autoInsertIfNeeded()
     }
 }

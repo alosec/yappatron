@@ -46,11 +46,35 @@ Validated easy-mode (quiet 1:1) cleanly. Hard-mode (3+ speakers, ambient noise) 
 - `feature/speaker-registry` — original pre-STT embedding gate (dead, kept for reference only)
 - `feature/local-segmenter` — experimental local-only diarization. FluidAudio segmentation was coarser than Deepgram's in our tests; reverted main, branch preserved for later evaluation if Deepgram regresses or a cloud-free path is needed.
 
-### iPhone app (unchanged this session)
+### iPhone app
 
-Native iOS project at `packages/ios/YappatronIOS` still installed on test iPhone via free Personal Team signing. Local mode (Apple on-device Speech) is the default backend. Awaiting first-run user validation. Companion keyboard extension scaffolded with Yappatron-tagged pasteboard bridge.
+Native iOS project at `packages/ios/YappatronIOS` installed on the test iPhone via free Personal Team signing.
+
+Latest UX direction: "Full Send" should be the primary mode. The app screen is not a hidden setup flow; it should show the active outputs, a big start/stop control, live transcript text, and a delivery feed.
+
+Current iOS output model:
+
+- Local mode (Apple on-device Speech) is a first-class source. It emits finalized chunks using a pause/debounce boundary and can deliver those chunks to outputs.
+- Deepgram mode still supports diarized runs and speaker naming.
+- Outputs are configurable independently of the engine:
+  - Webhook POST with optional bearer token.
+  - Yappatron keyboard auto-insert via the tagged pasteboard bridge.
+  - Optional return key after keyboard insertion.
+- Keyboard extension now polls while visible and inserts each new delivered chunk once, instead of only doing a one-shot insert when it opens.
+- Auto-start on app open is available for the "keep listening, keep sending" workflow, within iOS background-audio limits.
 
 ## What's Done This Session
+
+### iOS Full Send UX pass (2026-05-08, late night)
+
+Shipped a comprehensive iPhone UX pass based on user feedback that the previous webhook flow was hidden behind Deepgram mode and did not feel like a usable always-send dictation surface:
+
+- Reworked `ContentView` around a large "Start Full Send" / "Stop Full Send" control, visible output toggles, engine selector, live transcript, and delivery log.
+- Webhook configuration is visible regardless of Local vs Deepgram engine. Local mode can now send to webhook too.
+- Added `TranscriptOutputRouter`, `TranscriptOutputSettings`, and `TranscriptOutputEvent` to keep output delivery as a clear abstraction instead of wiring webhook and keyboard behavior directly into each recognizer path.
+- Local Speech now schedules final-ish chunks via a 1.1s pause debounce and flushes on stop. This gives local mode an end-of-utterance approximation suitable for webhook/keyboard delivery.
+- Keyboard payload metadata now includes "press return after insert"; the keyboard extension polls while open and auto-inserts new chunks once.
+- Added an "Auto-start on app open" toggle for the full-send workflow.
 
 ### iOS webhook streaming spike (2026-05-08, very late)
 

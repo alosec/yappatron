@@ -14,6 +14,27 @@ private enum YappatronPasteboard {
         let source: String
         let updatedAt: TimeInterval
         let autoInsertOnKeyboardOpen: Bool
+        let pressReturnAfterInsert: Bool
+
+        init(
+            source: String,
+            updatedAt: TimeInterval,
+            autoInsertOnKeyboardOpen: Bool,
+            pressReturnAfterInsert: Bool
+        ) {
+            self.source = source
+            self.updatedAt = updatedAt
+            self.autoInsertOnKeyboardOpen = autoInsertOnKeyboardOpen
+            self.pressReturnAfterInsert = pressReturnAfterInsert
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            source = try container.decode(String.self, forKey: .source)
+            updatedAt = try container.decode(TimeInterval.self, forKey: .updatedAt)
+            autoInsertOnKeyboardOpen = try container.decode(Bool.self, forKey: .autoInsertOnKeyboardOpen)
+            pressReturnAfterInsert = try container.decodeIfPresent(Bool.self, forKey: .pressReturnAfterInsert) ?? false
+        }
     }
 }
 
@@ -21,6 +42,7 @@ struct SharedTranscript: Equatable {
     let text: String
     let updatedAt: TimeInterval
     let autoInsertOnKeyboardOpen: Bool
+    let pressReturnAfterInsert: Bool
 }
 
 final class SharedTranscriptStore {
@@ -30,6 +52,7 @@ final class SharedTranscriptStore {
         static let latestTranscript = "latestTranscript"
         static let latestTranscriptUpdatedAt = "latestTranscriptUpdatedAt"
         static let autoInsertOnKeyboardOpen = "autoInsertOnKeyboardOpen"
+        static let pressReturnAfterInsert = "pressReturnAfterInsert"
     }
 
     private let defaults: UserDefaults
@@ -44,6 +67,16 @@ final class SharedTranscriptStore {
         }
         set {
             defaults.set(newValue, forKey: Keys.autoInsertOnKeyboardOpen)
+            refreshPasteboardMetadata()
+        }
+    }
+
+    var pressReturnAfterInsert: Bool {
+        get {
+            defaults.bool(forKey: Keys.pressReturnAfterInsert)
+        }
+        set {
+            defaults.set(newValue, forKey: Keys.pressReturnAfterInsert)
             refreshPasteboardMetadata()
         }
     }
@@ -73,7 +106,8 @@ final class SharedTranscriptStore {
         SharedTranscript(
             text: defaults.string(forKey: Keys.latestTranscript) ?? "",
             updatedAt: defaults.double(forKey: Keys.latestTranscriptUpdatedAt),
-            autoInsertOnKeyboardOpen: autoInsertOnKeyboardOpen
+            autoInsertOnKeyboardOpen: autoInsertOnKeyboardOpen,
+            pressReturnAfterInsert: pressReturnAfterInsert
         )
     }
 
@@ -81,7 +115,12 @@ final class SharedTranscriptStore {
         guard let item = UIPasteboard.general.items.first,
               let metadata = Self.metadata(from: item),
               metadata.source == YappatronPasteboard.source else {
-            return SharedTranscript(text: "", updatedAt: 0, autoInsertOnKeyboardOpen: false)
+            return SharedTranscript(
+                text: "",
+                updatedAt: 0,
+                autoInsertOnKeyboardOpen: false,
+                pressReturnAfterInsert: false
+            )
         }
 
         let text = YappatronPasteboard.textTypes
@@ -91,7 +130,8 @@ final class SharedTranscriptStore {
         return SharedTranscript(
             text: text,
             updatedAt: metadata.updatedAt,
-            autoInsertOnKeyboardOpen: metadata.autoInsertOnKeyboardOpen
+            autoInsertOnKeyboardOpen: metadata.autoInsertOnKeyboardOpen,
+            pressReturnAfterInsert: metadata.pressReturnAfterInsert
         )
     }
 
@@ -108,7 +148,8 @@ final class SharedTranscriptStore {
         let metadata = YappatronPasteboard.Metadata(
             source: YappatronPasteboard.source,
             updatedAt: updatedAt,
-            autoInsertOnKeyboardOpen: autoInsertOnKeyboardOpen
+            autoInsertOnKeyboardOpen: autoInsertOnKeyboardOpen,
+            pressReturnAfterInsert: pressReturnAfterInsert
         )
 
         var item: [String: Any] = YappatronPasteboard.textTypes.reduce(into: [:]) { result, textType in
