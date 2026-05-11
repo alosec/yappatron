@@ -18,11 +18,12 @@ Shipped behavior:
 - Adds a visible outline around the locked window and keeps it tracking window moves/resizes.
 - Tracks the most recent text input so the menu item can lock the intended destination even after the menu opens.
 - Changes the lock shortcut to `⌃⌥⌘L` and adds local/global key-monitor fallback in addition to Carbon hotkey registration.
-- Adds a bottom-line indicator style for the active display.
+- Adds a bottom-line waveform indicator style for the active display, with calm motion while idle/listening and taller/faster bars while speaking.
 - Adds a short settle delay before auto-enter to improve Codex/paste-fallback behavior.
 
 Validation follow-ups:
 - Smoke-test the locked-window outline on multiple displays and with moved/resized windows.
+- Tune the bottom-line waveform after live use if it is too loud or too subtle.
 - Re-test `Press Enter After Speech` in Codex. A 120ms settle delay was added before Return, but this still needs live confirmation.
 
 Next iteration should prioritize any remaining reliability issues found in live use.
