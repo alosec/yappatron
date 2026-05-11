@@ -2,6 +2,71 @@
 
 **Last Updated:** 2026-05-11
 
+## iOS stabilization & next-phase scope (2026-05-10)
+
+Long planning session after the Callie call. Pulled the iPhone app
+direction into focus and named four concrete iOS items plus two
+forward-looking directions. Captured here so they don't slip.
+
+### Active iOS work
+
+1. **Ambient listener is the primary mode.** Open the app, turn it
+   on, get a diarized transcription right there. No setup flow gating
+   it. The Full Send pass (2026-05-08) is the right base; the framing
+   sharpens: this is an ambient listener first, with optional routed
+   output downstream — not a webhook tool with a transcript view.
+
+2. **Destination as a first-class concept.** Replace the current
+   single "Webhook URL + bearer token" config with *named
+   destinations* the user can toggle between: Zip (TinyFat agent),
+   custom webhook, tmux-pane relay, etc. The mental model is "I am
+   listening; this stream is currently going to <named destination>."
+   Off by default; toggled per session.
+
+3. **Diarization on iOS.** Port the hybrid Deepgram +
+   FluidAudio voiceprint path from Mac. Today the iOS spike is
+   Deepgram-IDs-only with a rename UI; voiceprint enrollment was
+   deliberately deferred. With enrolled speakers the iPhone gets the
+   same `[Alex]`/`[Callie]` quality the Mac has, which makes it real
+   for meetings and calls.
+
+4. **Bug: Local mode on iOS is not functional.** Apple on-device
+   Speech path is bugging out. Symptoms not yet written up — needs a
+   dedicated session to capture exact failure modes before fixing.
+   For now, treat local-mode as not working on iOS.
+
+5. **Bug: Deepgram on iOS is too jittery — emits too quickly.** The
+   Mac handles this via a pause/debounce boundary before emit; iOS is
+   likely missing an equivalent endpointing pass and is firing on
+   every interim final instead of waiting for a complete-thought
+   boundary. Needs a debounce/pause-detection layer between the
+   Deepgram stream and the output router so chunks land at sane turn
+   boundaries.
+
+### Forward-looking iOS directions (captured, not active)
+
+6. **Conventional chat experience with TinyFat agents.** iOS app
+   conceptualized as a TinyFat *chat client*, not just a dictation
+   surface. Likely pure Swift. Scope/shape TBD. The voice piece
+   becomes one of several input modes inside a richer client surface,
+   not the whole product.
+
+7. **Voice call with your agent.** Live two-way voice conversation
+   with a TinyFat agent (Zip, etc.). Shape TBD — no design yet. This
+   is the "Jarvis-shaped" direction discussed in the same session.
+   Captured as a known want; not on the near-term roadmap.
+
+### Naming/branding (parked)
+
+The Yapatron name fits a dictation tool. If the product becomes
+multi-channel — voice + chat + call, with TinyFat agents as the
+backing brain — the name no longer fits. TinyFat is the platform
+brand and doesn't fit a consumer voice/chat client either. A new
+proper-noun brand probably belongs on top of the iOS+Mac client
+surface. Reference frame: Jarvis (Iron Man), KITT (Knight Rider) —
+named, voice-first, acts on your behalf, ambient. No decision made
+this session.
+
 ## Current Focus
 
 **RECENTLY SHIPPED: Input focus locking + UX hardening**
