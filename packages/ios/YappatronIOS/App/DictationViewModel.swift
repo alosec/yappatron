@@ -260,6 +260,7 @@ final class DictationViewModel: ObservableObject {
             lastWebhookError = nil
 
             status = .connecting
+            UIApplication.shared.isIdleTimerDisabled = true
 
             switch backend {
             case .local:
@@ -281,6 +282,7 @@ final class DictationViewModel: ObservableObject {
         }
 
         status = .finishing
+        UIApplication.shared.isIdleTimerDisabled = false
 
         if let localRecognizer {
             localDeliveryTask?.cancel()
@@ -382,7 +384,7 @@ final class DictationViewModel: ObservableObject {
         }
         recognizer.onError = { [weak self] message in
             Task { @MainActor in
-                self?.status = .failed(message)
+                await self?.failRecording(message)
             }
         }
 
@@ -489,7 +491,7 @@ final class DictationViewModel: ObservableObject {
         }
         client.onError = { [weak self] message in
             Task { @MainActor in
-                self?.status = .failed(message)
+                await self?.failRecording(message)
             }
         }
 
@@ -499,7 +501,7 @@ final class DictationViewModel: ObservableObject {
         let stream = AsyncStream<Data>.makeStream()
         audioContinuation = stream.continuation
 
-        audioSendTask = Task { [weak client] in
+        audioSendTask = Task { [weak client, weak self] in
             for await chunk in stream.stream {
                 guard !Task.isCancelled else {
                     break
@@ -508,9 +510,7 @@ final class DictationViewModel: ObservableObject {
                 do {
                     try await client?.sendAudio(chunk)
                 } catch {
-                    await MainActor.run { [weak self] in
-                        self?.status = .failed(error.localizedDescription)
-                    }
+                    await self?.failRecording(error.localizedDescription)
                     break
                 }
             }
@@ -523,6 +523,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func cleanUpRecording() async {
+        UIApplication.shared.isIdleTimerDisabled = false
         localDeliveryTask?.cancel()
         localDeliveryTask = nil
 
@@ -538,5 +539,10 @@ final class DictationViewModel: ObservableObject {
         audioSendTask = nil
         await deepgramClient?.disconnect()
         deepgramClient = nil
+    }
+
+    private func failRecording(_ message: String) async {
+        status = .failed(message)
+        await cleanUpRecording()
     }
 }

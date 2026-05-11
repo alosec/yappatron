@@ -53,8 +53,10 @@ Pairs naturally with the broader "build this into the agent product" plan — on
    - Open question whether reaching back to edit already-typed text is worth the engineering vs. just typing forward and cleaning up post-session
 
 7. **iPhone validation backlog** — P2
-   - First-run Local-mode test on device
-   - Type-anywhere keyboard flow
+   - First-run Local-mode test on device after the 2026-05-11 recognition-task restart patch
+   - Deepgram endpointing test: confirm chunks now land at complete-thought boundaries, not every short final fragment
+   - Type-anywhere keyboard flow: confirm queued chunks insert in order and no earlier utterances are dropped
+   - Trust the refreshed Personal Team profile on device if direct launch is blocked after install
    - Eventually a paid Apple Developer Program path with App Group entitlement for cleaner companion-app/keyboard sharing
 
 8. **Hot-swap backends without restart** — P3

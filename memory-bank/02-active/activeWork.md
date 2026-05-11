@@ -30,18 +30,21 @@ forward-looking directions. Captured here so they don't slip.
    same `[Alex]`/`[Callie]` quality the Mac has, which makes it real
    for meetings and calls.
 
-4. **Bug: Local mode on iOS is not functional.** Apple on-device
-   Speech path is bugging out. Symptoms not yet written up — needs a
-   dedicated session to capture exact failure modes before fixing.
-   For now, treat local-mode as not working on iOS.
+4. **Bug: Local mode on iOS is janky.** Apple Speech now restarts
+   recognition tasks across task endings, requests punctuation, and
+   falls back to Apple's default path if on-device recognition is not
+   available. Needs real-device validation before calling Local stable.
 
-5. **Bug: Deepgram on iOS is too jittery — emits too quickly.** The
-   Mac handles this via a pause/debounce boundary before emit; iOS is
-   likely missing an equivalent endpointing pass and is firing on
-   every interim final instead of waiting for a complete-thought
-   boundary. Needs a debounce/pause-detection layer between the
-   Deepgram stream and the output router so chunks land at sane turn
-   boundaries.
+5. **Bug: Deepgram on iOS is too jittery — emits too quickly.** Patched
+   on 2026-05-11: iOS now accumulates Deepgram `is_final` fragments and
+   emits to outputs only after `UtteranceEnd`, `Finalize`, or a 2.75s
+   silence debounce. This should match the Mac's complete-thought shape
+   more closely.
+
+6. **Keyboard bridge reliability.** Patched on 2026-05-11: the keyboard
+   now reads a queue of pending Yappatron pasteboard chunks instead of
+   only the latest chunk, so it should not drop earlier utterances when
+   the keyboard was not visible at the exact delivery moment.
 
 ### Forward-looking iOS directions (captured, not active)
 
@@ -133,13 +136,13 @@ Latest UX direction: "Full Send" should be the primary mode. The app screen is n
 
 Current iOS output model:
 
-- Local mode (Apple on-device Speech) is a first-class source. It emits finalized chunks using a pause/debounce boundary and can deliver those chunks to outputs.
-- Deepgram mode still supports diarized runs and speaker naming.
+- Local mode (Apple Speech) is a first-class source. It emits finalized chunks using a pause/debounce boundary, restarts recognition tasks across Apple Speech task endings, and can deliver those chunks to outputs.
+- Deepgram mode still supports diarized runs and speaker naming. iOS delivery is now utterance-boundary debounced instead of firing every Deepgram `is_final` fragment.
 - Outputs are configurable independently of the engine:
   - Webhook POST with optional bearer token.
-  - Yappatron keyboard auto-insert via the tagged pasteboard bridge.
+  - Yappatron keyboard auto-insert via a queued tagged pasteboard bridge.
   - Optional return key after keyboard insertion.
-- Keyboard extension now polls while visible and inserts each new delivered chunk once, instead of only doing a one-shot insert when it opens.
+- Keyboard extension now polls while visible and inserts queued chunks once, instead of only exposing the latest chunk.
 - Auto-start on app open is available for the "keep listening, keep sending" workflow, within iOS background-audio limits.
 
 ## What's Done This Session

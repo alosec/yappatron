@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 private enum YappatronPasteboard {
     static let source = "com.yappatron.ios"
     static let metadataType = "com.yappatron.transcript.metadata"
+    static let maxQueuedItems = 24
     static let textTypes = [
         UTType.utf8PlainText.identifier,
         UTType.plainText.identifier
@@ -94,11 +95,10 @@ final class SharedTranscriptStore {
         defaults.set("", forKey: Keys.latestTranscript)
         defaults.set(0, forKey: Keys.latestTranscriptUpdatedAt)
 
-        if removePasteboard,
-           let item = UIPasteboard.general.items.first,
-           let metadata = Self.metadata(from: item),
-           metadata.source == YappatronPasteboard.source {
-            UIPasteboard.general.items = []
+        if removePasteboard {
+            UIPasteboard.general.items = UIPasteboard.general.items.filter { item in
+                Self.metadata(from: item)?.source != YappatronPasteboard.source
+            }
         }
     }
 
@@ -112,30 +112,37 @@ final class SharedTranscriptStore {
     }
 
     func latestTranscriptForKeyboard() -> SharedTranscript {
-        guard let item = UIPasteboard.general.items.first,
-              let metadata = Self.metadata(from: item),
-              metadata.source == YappatronPasteboard.source else {
-            return SharedTranscript(
-                text: "",
-                updatedAt: 0,
-                autoInsertOnKeyboardOpen: false,
-                pressReturnAfterInsert: false
-            )
-        }
-
-        let text = YappatronPasteboard.textTypes
-            .compactMap { item[$0] as? String }
-            .first ?? ""
-
-        return SharedTranscript(
-            text: text,
-            updatedAt: metadata.updatedAt,
-            autoInsertOnKeyboardOpen: metadata.autoInsertOnKeyboardOpen,
-            pressReturnAfterInsert: metadata.pressReturnAfterInsert
+        keyboardTranscripts().last ?? SharedTranscript(
+            text: "",
+            updatedAt: 0,
+            autoInsertOnKeyboardOpen: false,
+            pressReturnAfterInsert: false
         )
     }
 
+    func keyboardTranscripts(after updatedAt: TimeInterval = 0) -> [SharedTranscript] {
+        UIPasteboard.general.items
+            .compactMap(Self.transcript(from:))
+            .filter { $0.updatedAt > updatedAt }
+            .sorted { $0.updatedAt < $1.updatedAt }
+    }
+
     private func refreshPasteboardMetadata() {
+        let queuedItems = UIPasteboard.general.items
+            .compactMap(Self.transcript(from:))
+            .map { makePasteboardItem(text: $0.text, updatedAt: $0.updatedAt) }
+
+        if !queuedItems.isEmpty {
+            UIPasteboard.general.setItems(
+                queuedItems,
+                options: [
+                    .localOnly: true,
+                    .expirationDate: Date(timeIntervalSinceNow: 8 * 60 * 60)
+                ]
+            )
+            return
+        }
+
         let transcript = latestTranscript()
         guard !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
@@ -145,6 +152,30 @@ final class SharedTranscriptStore {
     }
 
     private func publishToPasteboard(text: String, updatedAt: TimeInterval) {
+        var items = UIPasteboard.general.items.filter { item in
+            guard let metadata = Self.metadata(from: item),
+                  metadata.source == YappatronPasteboard.source else {
+                return false
+            }
+
+            return metadata.updatedAt != updatedAt
+        }
+
+        items.append(makePasteboardItem(text: text, updatedAt: updatedAt))
+        if items.count > YappatronPasteboard.maxQueuedItems {
+            items = Array(items.suffix(YappatronPasteboard.maxQueuedItems))
+        }
+
+        UIPasteboard.general.setItems(
+            items,
+            options: [
+                .localOnly: true,
+                .expirationDate: Date(timeIntervalSinceNow: 8 * 60 * 60)
+            ]
+        )
+    }
+
+    private func makePasteboardItem(text: String, updatedAt: TimeInterval) -> [String: Any] {
         let metadata = YappatronPasteboard.Metadata(
             source: YappatronPasteboard.source,
             updatedAt: updatedAt,
@@ -160,12 +191,24 @@ final class SharedTranscriptStore {
             item[YappatronPasteboard.metadataType] = data
         }
 
-        UIPasteboard.general.setItems(
-            [item],
-            options: [
-                .localOnly: true,
-                .expirationDate: Date(timeIntervalSinceNow: 8 * 60 * 60)
-            ]
+        return item
+    }
+
+    private static func transcript(from item: [String: Any]) -> SharedTranscript? {
+        guard let metadata = Self.metadata(from: item),
+              metadata.source == YappatronPasteboard.source else {
+            return nil
+        }
+
+        let text = YappatronPasteboard.textTypes
+            .compactMap { item[$0] as? String }
+            .first ?? ""
+
+        return SharedTranscript(
+            text: text,
+            updatedAt: metadata.updatedAt,
+            autoInsertOnKeyboardOpen: metadata.autoInsertOnKeyboardOpen,
+            pressReturnAfterInsert: metadata.pressReturnAfterInsert
         )
     }
 

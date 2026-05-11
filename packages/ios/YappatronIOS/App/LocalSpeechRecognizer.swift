@@ -34,7 +34,12 @@ final class LocalSpeechRecognizer {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var latestTranscript = ""
+    private var committedTranscript = ""
+    private var currentSegmentTranscript = ""
     private var isStopping = false
+    private var isRunning = false
+    private var isRestarting = false
+    private var restartTask: Task<Void, Never>?
 
     func start() async throws {
         guard await Self.requestSpeechAuthorization() else {
@@ -49,41 +54,18 @@ final class LocalSpeechRecognizer {
             throw RecognitionError.speechRecognitionUnavailable
         }
 
-        guard speechRecognizer.supportsOnDeviceRecognition else {
-            throw RecognitionError.onDeviceRecognitionUnavailable
-        }
-
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.record, mode: .measurement, options: [.duckOthers])
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = true
-        request.taskHint = .dictation
-        recognitionRequest = request
+        isStopping = false
+        isRunning = true
+        isRestarting = false
+        latestTranscript = ""
+        committedTranscript = ""
+        currentSegmentTranscript = ""
 
-        recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let self else {
-                return
-            }
-
-            if let result {
-                let transcript = result.bestTranscription.formattedString
-                self.latestTranscript = transcript
-
-                DispatchQueue.main.async { [weak self] in
-                    self?.onTranscript?(transcript, result.isFinal)
-                }
-            }
-
-            if let error, !self.isStopping {
-                let message = error.localizedDescription
-                DispatchQueue.main.async { [weak self] in
-                    self?.onError?(message)
-                }
-            }
-        }
+        try startRecognitionTask()
 
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
@@ -92,8 +74,8 @@ final class LocalSpeechRecognizer {
         }
 
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak request] buffer, _ in
-            request?.append(buffer)
+        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
+            self?.recognitionRequest?.append(buffer)
         }
 
         audioEngine.prepare()
@@ -102,12 +84,16 @@ final class LocalSpeechRecognizer {
 
     func stop() async -> String {
         isStopping = true
+        isRunning = false
+        restartTask?.cancel()
+        restartTask = nil
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
         recognitionRequest?.endAudio()
 
         try? await Task.sleep(nanoseconds: 700_000_000)
 
+        commitCurrentSegment()
         let transcript = latestTranscript
         recognitionTask?.cancel()
         recognitionTask = nil
@@ -115,6 +101,102 @@ final class LocalSpeechRecognizer {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 
         return transcript
+    }
+
+    private func startRecognitionTask() throws {
+        guard let speechRecognizer else {
+            throw RecognitionError.speechRecognitionUnavailable
+        }
+
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = speechRecognizer.supportsOnDeviceRecognition
+        request.taskHint = .dictation
+        if #available(iOS 16.0, *) {
+            request.addsPunctuation = true
+        }
+        recognitionRequest = request
+
+        recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+            guard let self else {
+                return
+            }
+
+            if let result {
+                self.receive(result)
+            }
+
+            if let error, !self.isStopping, !self.isRestarting {
+                self.scheduleRecognitionRestart(after: error)
+            }
+        }
+    }
+
+    private func receive(_ result: SFSpeechRecognitionResult) {
+        currentSegmentTranscript = result.bestTranscription.formattedString
+        latestTranscript = joinedTranscript(committedTranscript, currentSegmentTranscript)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onTranscript?(self.latestTranscript, result.isFinal)
+        }
+
+        if result.isFinal, !isStopping {
+            commitCurrentSegment()
+            scheduleRecognitionRestart(after: nil)
+        }
+    }
+
+    private func commitCurrentSegment() {
+        let segment = currentSegmentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !segment.isEmpty else {
+            latestTranscript = committedTranscript
+            currentSegmentTranscript = ""
+            return
+        }
+
+        committedTranscript = joinedTranscript(committedTranscript, segment)
+        latestTranscript = committedTranscript
+        currentSegmentTranscript = ""
+    }
+
+    private func scheduleRecognitionRestart(after error: Error?) {
+        guard isRunning, !isStopping else { return }
+        guard !isRestarting else { return }
+
+        isRestarting = true
+        commitCurrentSegment()
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        recognitionRequest = nil
+        recognitionTask = nil
+
+        restartTask?.cancel()
+        restartTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard let self, self.isRunning, !self.isStopping else { return }
+
+            do {
+                try self.startRecognitionTask()
+                self.isRestarting = false
+            } catch {
+                self.isRunning = false
+                self.isRestarting = false
+                let message = error.localizedDescription
+                DispatchQueue.main.async { [weak self] in
+                    self?.onError?(message)
+                }
+            }
+        }
+    }
+
+    private func joinedTranscript(_ lhs: String, _ rhs: String) -> String {
+        let left = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        let right = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if left.isEmpty { return right }
+        if right.isEmpty { return left }
+        return "\(left) \(right)"
     }
 
     private static func requestSpeechAuthorization() async -> Bool {

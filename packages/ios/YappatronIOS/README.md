@@ -13,9 +13,9 @@ Native iPhone companion app for Yappatron dictation.
   - Latest transcript handoff through a Yappatron-tagged pasteboard item
   - Copy and share actions
 - `YappatronKeyboard` custom keyboard extension target
-  - Reads the latest Yappatron-tagged pasteboard transcript
+  - Reads queued Yappatron-tagged pasteboard transcript chunks
   - Inserts text into the active iOS text field with `textDocumentProxy.insertText`
-  - Optional one-shot auto-insert when the keyboard opens
+  - Optional auto-insert while the keyboard remains open
 
 ## Current Type-Anywhere Model
 
@@ -23,7 +23,7 @@ iOS does not allow macOS-style global keystroke injection. The supported path is
 
 1. Start recording in the Yappatron app.
 2. Switch to the destination app while the audio session is active.
-3. Use the Yappatron keyboard to insert the latest transcript into the current text field.
+3. Use the Yappatron keyboard to insert pending transcript chunks into the current text field.
 
 The app declares `UIBackgroundModes = audio`, which is the same family of workaround used by many iOS dictation companions. iOS can still suspend or terminate the app, so this should be tested on-device under real switching patterns.
 

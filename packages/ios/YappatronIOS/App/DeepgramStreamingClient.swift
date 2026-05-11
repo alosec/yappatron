@@ -36,13 +36,14 @@ final class DeepgramStreamingClient: NSObject {
         let start: Double?
         let duration: Double?
         let is_final: Bool?
+        let speech_final: Bool?
         let from_finalize: Bool?
         let message: String?
     }
 
     var onTranscript: ((String, Bool) -> Void)?
-    /// Called once per `is_final` turn with diarized runs aggregated from the
-    /// word-level Deepgram payload. Empty array if Deepgram didn't return word
+    /// Called once per completed utterance with diarized runs aggregated across
+    /// Deepgram `is_final` fragments. Empty array if Deepgram didn't return word
     /// data (e.g. diarize disabled or short interim).
     var onDiarizedFinal: (([DiarizedRun]) -> Void)?
     var onError: ((String) -> Void)?
@@ -56,7 +57,11 @@ final class DeepgramStreamingClient: NSObject {
 
     private var finalSegments: [String] = []
     private var latestInterim = ""
+    private var currentUtterance = ""
+    private var currentDiarizedRuns: [DiarizedRun] = []
     private var isConnected = false
+    private var eouTask: Task<Void, Never>?
+    private let eouDebounceMs: UInt64 = 2_750
 
     init(apiKey: String) {
         self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -77,7 +82,8 @@ final class DeepgramStreamingClient: NSObject {
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
             URLQueryItem(name: "channels", value: "1"),
-            URLQueryItem(name: "endpointing", value: "900")
+            URLQueryItem(name: "endpointing", value: "2750"),
+            URLQueryItem(name: "utterance_end_ms", value: "2750")
         ]
 
         guard let url = components?.url else {
@@ -122,6 +128,7 @@ final class DeepgramStreamingClient: NSObject {
 
         try? await webSocketTask.send(.string("{\"type\":\"Finalize\"}"))
         try? await Task.sleep(nanoseconds: 1_200_000_000)
+        emitPendingUtterance()
 
         return currentTranscript()
     }
@@ -130,8 +137,10 @@ final class DeepgramStreamingClient: NSObject {
         isConnected = false
         receiveTask?.cancel()
         keepAliveTask?.cancel()
+        eouTask?.cancel()
         receiveTask = nil
         keepAliveTask = nil
+        eouTask = nil
 
         if let webSocketTask {
             try? await webSocketTask.send(.string("{\"type\":\"CloseStream\"}"))
@@ -202,6 +211,8 @@ final class DeepgramStreamingClient: NSObject {
         switch message.type {
         case "Results":
             handleResults(message)
+        case "UtteranceEnd":
+            emitPendingUtterance()
         case "Error":
             DispatchQueue.main.async { [weak self] in
                 self?.onError?(message.message ?? "Unknown Deepgram error.")
@@ -221,22 +232,23 @@ final class DeepgramStreamingClient: NSObject {
         if message.is_final == true {
             latestInterim = ""
             finalSegments.append(transcript)
+            appendToPendingUtterance(transcript)
 
-            // Diarized runs (one finalized turn → 1+ runs depending on whether
-            // the speaker changed mid-turn). Surfaced through onDiarizedFinal
-            // so the caller can post per-run if desired.
             if let words = alternative.words, !words.isEmpty {
-                let runs = words.intoRuns()
-                let onDiarized = self.onDiarizedFinal
-                DispatchQueue.main.async {
-                    onDiarized?(runs)
-                }
+                appendDiarizedRuns(words.intoRuns())
             }
 
-            publishTranscript(isFinal: message.from_finalize == true)
+            publishTranscript(isFinal: false)
+
+            if message.from_finalize == true || message.speech_final == true {
+                emitPendingUtterance()
+            } else {
+                scheduleEOU()
+            }
         } else {
             latestInterim = transcript
             publishTranscript(isFinal: false)
+            scheduleEOU()
         }
     }
 
@@ -258,6 +270,66 @@ final class DeepgramStreamingClient: NSObject {
         }
 
         return "\(finalText) \(latestInterim)"
+    }
+
+    private func appendToPendingUtterance(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if currentUtterance.isEmpty {
+            currentUtterance = trimmed
+        } else {
+            currentUtterance += " \(trimmed)"
+        }
+    }
+
+    private func appendDiarizedRuns(_ runs: [DiarizedRun]) {
+        for run in runs {
+            guard !run.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+
+            if let last = currentDiarizedRuns.last,
+               last.speakerID == run.speakerID {
+                currentDiarizedRuns[currentDiarizedRuns.count - 1] = DiarizedRun(
+                    speakerID: last.speakerID,
+                    text: "\(last.text) \(run.text)",
+                    startSec: last.startSec,
+                    endSec: run.endSec
+                )
+            } else {
+                currentDiarizedRuns.append(run)
+            }
+        }
+    }
+
+    private func scheduleEOU() {
+        eouTask?.cancel()
+        eouTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: (self?.eouDebounceMs ?? 2_750) * 1_000_000)
+            guard !Task.isCancelled else { return }
+            self?.emitPendingUtterance()
+        }
+    }
+
+    private func emitPendingUtterance() {
+        let utterance = currentUtterance.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !utterance.isEmpty else { return }
+
+        eouTask?.cancel()
+        eouTask = nil
+
+        let runs = currentDiarizedRuns.isEmpty
+            ? [DiarizedRun(speakerID: -1, text: utterance, startSec: 0, endSec: 0)]
+            : currentDiarizedRuns
+        let fullTranscript = currentTranscript()
+        currentUtterance = ""
+        currentDiarizedRuns = []
+
+        let onTranscript = self.onTranscript
+        let onDiarized = self.onDiarizedFinal
+        DispatchQueue.main.async {
+            onDiarized?(runs)
+            onTranscript?(fullTranscript, true)
+        }
     }
 }
 

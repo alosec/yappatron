@@ -9,16 +9,11 @@ final class KeyboardViewController: UIInputViewController {
     private let refreshButton = UIButton(type: .system)
     private let nextKeyboardButton = UIButton(type: .system)
 
-    private var latestTranscript = SharedTranscript(
-        text: "",
-        updatedAt: 0,
-        autoInsertOnKeyboardOpen: false,
-        pressReturnAfterInsert: false
-    )
+    private var pendingTranscripts: [SharedTranscript] = []
     private var refreshTimer: Timer?
 
     private enum LocalKeys {
-        static let lastAutoInsertedUpdatedAt = "lastAutoInsertedUpdatedAt"
+        static let lastInsertedUpdatedAt = "lastAutoInsertedUpdatedAt"
     }
 
     override func viewDidLoad() {
@@ -96,29 +91,36 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func refreshTranscript() {
-        latestTranscript = transcriptStore.latestTranscriptForKeyboard()
-        let text = latestTranscript.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lastInsertedAt = localDefaults.double(forKey: LocalKeys.lastInsertedUpdatedAt)
+        pendingTranscripts = transcriptStore.keyboardTranscripts(after: lastInsertedAt)
+        let text = pendingText(from: pendingTranscripts)
 
         if text.isEmpty {
-            transcriptLabel.text = "Waiting for Yappatron"
-        } else if latestTranscript.pressReturnAfterInsert {
+            let latest = transcriptStore.latestTranscriptForKeyboard()
+            if latest.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                transcriptLabel.text = "Waiting for Yappatron"
+            } else {
+                transcriptLabel.text = "Latest Yappatron text inserted"
+            }
+        } else if pendingTranscripts.count > 1 {
+            transcriptLabel.text = "\(pendingTranscripts.count) chunks ready\n\(text)"
+        } else if pendingTranscripts.first?.pressReturnAfterInsert == true {
             transcriptLabel.text = "\(text)\n↵"
         } else {
             transcriptLabel.text = text
         }
         transcriptLabel.textColor = text.isEmpty ? .secondaryLabel : .label
         insertButton.isEnabled = !text.isEmpty
+        insertButton.configuration?.title = pendingTranscripts.count > 1 ? "Insert \(pendingTranscripts.count)" : "Insert"
     }
 
     private func autoInsertIfNeeded() {
-        guard latestTranscript.autoInsertOnKeyboardOpen,
-              latestTranscript.updatedAt > 0,
-              latestTranscript.updatedAt != localDefaults.double(forKey: LocalKeys.lastAutoInsertedUpdatedAt) else {
+        let ready = pendingTranscripts.filter(\.autoInsertOnKeyboardOpen)
+        guard !ready.isEmpty else {
             return
         }
 
-        insertLatestTranscript(markAutoInserted: true)
-        localDefaults.set(latestTranscript.updatedAt, forKey: LocalKeys.lastAutoInsertedUpdatedAt)
+        insert(ready, markInserted: true)
     }
 
     private func startRefreshing() {
@@ -139,28 +141,42 @@ final class KeyboardViewController: UIInputViewController {
         refreshTimer = nil
     }
 
-    private func insertLatestTranscript(markAutoInserted: Bool) {
-        let text = latestTranscript.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
+    private func insert(_ transcripts: [SharedTranscript], markInserted: Bool) {
+        let chunks = transcripts.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !chunks.isEmpty else {
             return
         }
 
-        textDocumentProxy.insertText(text)
-        if latestTranscript.pressReturnAfterInsert {
-            textDocumentProxy.insertText("\n")
+        for (index, transcript) in chunks.enumerated() {
+            let text = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            textDocumentProxy.insertText(text)
+
+            if transcript.pressReturnAfterInsert {
+                textDocumentProxy.insertText("\n")
+            } else if index < chunks.count - 1 {
+                textDocumentProxy.insertText(" ")
+            }
         }
 
-        if markAutoInserted {
-            localDefaults.set(latestTranscript.updatedAt, forKey: LocalKeys.lastAutoInsertedUpdatedAt)
+        if markInserted, let newest = chunks.last?.updatedAt {
+            localDefaults.set(newest, forKey: LocalKeys.lastInsertedUpdatedAt)
+            refreshTranscript()
         }
     }
 
     @objc private func insertButtonTapped() {
-        insertLatestTranscript(markAutoInserted: false)
+        insert(pendingTranscripts, markInserted: true)
     }
 
     @objc private func refreshButtonTapped() {
         refreshTranscript()
         autoInsertIfNeeded()
+    }
+
+    private func pendingText(from transcripts: [SharedTranscript]) -> String {
+        transcripts
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }
