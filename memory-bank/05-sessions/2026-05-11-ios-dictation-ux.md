@@ -38,3 +38,5 @@ Patched a bridge drop case where the keyboard could mark finalized chunks as con
 Compacted the keyboard toward a Spokenly-style control strip: one short row for start/history/check/undo/space/return/delete, a one-line status/transcript label, no custom globe key, and a shorter keyboard height target.
 
 Live test clarified the iOS boundary: the companion app can keep listening in the foreground, but reliable insertion belongs to the keyboard extension when the user is back in the target app/input. Patched stale keyboard launch status so an observed recording state immediately wins over any prior "open Yappatron" message, and changed the compact space key label from `space` to `_`.
+
+Follow-up on the keyboard launch problem: Apple documents `NSExtensionContext.open` as extension-point dependent and calls out Today/iMessage, not custom keyboards. The old responder-chain `openURL:` workaround is also known to be unreliable on newer iOS. Next attempt is to render the start control as a real SwiftUI `Link` to `yappatron://dictation/start`, while still writing the pasteboard command and keeping the responder/webview fallbacks.

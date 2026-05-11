@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 import WebKit
 
@@ -7,6 +8,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private let transcriptLabel = UILabel()
     private let insertButton = UIButton(type: .system)
+    private let startButtonContainer = UIView()
     private let micButton = UIButton(type: .system)
     private let historyButton = UIButton(type: .system)
     private let undoButton = UIButton(type: .system)
@@ -14,6 +16,7 @@ final class KeyboardViewController: UIInputViewController {
     private let returnButton = UIButton(type: .system)
     private let deleteButton = UIButton(type: .system)
     private let appLaunchWebView = WKWebView(frame: .zero)
+    private var startLinkController: UIHostingController<KeyboardStartLinkView>?
 
     private var pendingTranscripts: [SharedTranscript] = []
     private var dictationState = SharedDictationState(
@@ -84,6 +87,8 @@ final class KeyboardViewController: UIInputViewController {
         micButton.addTarget(self, action: #selector(micButtonTapped), for: .touchUpInside)
         micButton.accessibilityLabel = "Start dictation"
 
+        configureStartLink()
+
         historyButton.configuration = .tinted()
         historyButton.configuration?.image = UIImage(systemName: "clock.arrow.circlepath")
         historyButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 5, bottom: 6, trailing: 5)
@@ -123,7 +128,7 @@ final class KeyboardViewController: UIInputViewController {
         deleteButton.accessibilityLabel = "Delete"
 
         let buttonRow = UIStackView(arrangedSubviews: [
-            micButton,
+            startButtonContainer,
             historyButton,
             insertButton,
             undoButton,
@@ -136,7 +141,7 @@ final class KeyboardViewController: UIInputViewController {
         buttonRow.distribution = .fill
         buttonRow.spacing = 4
 
-        micButton.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        startButtonContainer.widthAnchor.constraint(equalToConstant: 80).isActive = true
         historyButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
         insertButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
         undoButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
@@ -166,6 +171,38 @@ final class KeyboardViewController: UIInputViewController {
             appLaunchWebView.topAnchor.constraint(equalTo: view.topAnchor),
             view.heightAnchor.constraint(greaterThanOrEqualToConstant: 92)
         ])
+    }
+
+    private func configureStartLink() {
+        guard let url = URL(string: "yappatron://dictation/start") else {
+            return
+        }
+
+        let linkController = UIHostingController(
+            rootView: KeyboardStartLinkView(url: url) { [weak self] in
+                self?.prepareStartDictationRequest()
+            }
+        )
+        startLinkController = linkController
+        addChild(linkController)
+        linkController.view.backgroundColor = .clear
+        linkController.view.translatesAutoresizingMaskIntoConstraints = false
+        startButtonContainer.addSubview(linkController.view)
+
+        micButton.translatesAutoresizingMaskIntoConstraints = false
+        startButtonContainer.addSubview(micButton)
+
+        NSLayoutConstraint.activate([
+            linkController.view.leadingAnchor.constraint(equalTo: startButtonContainer.leadingAnchor),
+            linkController.view.trailingAnchor.constraint(equalTo: startButtonContainer.trailingAnchor),
+            linkController.view.topAnchor.constraint(equalTo: startButtonContainer.topAnchor),
+            linkController.view.bottomAnchor.constraint(equalTo: startButtonContainer.bottomAnchor),
+            micButton.leadingAnchor.constraint(equalTo: startButtonContainer.leadingAnchor),
+            micButton.trailingAnchor.constraint(equalTo: startButtonContainer.trailingAnchor),
+            micButton.topAnchor.constraint(equalTo: startButtonContainer.topAnchor),
+            micButton.bottomAnchor.constraint(equalTo: startButtonContainer.bottomAnchor)
+        ])
+        linkController.didMove(toParent: self)
     }
 
     private func refreshTranscript() {
@@ -211,7 +248,9 @@ final class KeyboardViewController: UIInputViewController {
         transcriptLabel.textColor = text.isEmpty || !hasFullAccess ? secondaryTextColor : activeTextColor
         micButton.configuration?.title = dictationState.isRecording ? "Rec" : "Start"
         micButton.configuration?.image = UIImage(systemName: dictationState.isRecording ? "waveform" : "mic.fill")
-        micButton.isEnabled = !dictationState.isRecording
+        micButton.isEnabled = false
+        micButton.isHidden = !dictationState.isRecording
+        startLinkController?.view.isHidden = dictationState.isRecording
         insertButton.isEnabled = dictationState.isRecording || !pendingTranscripts.isEmpty || !text.isEmpty
         historyButton.isEnabled = hasFullAccess
     }
@@ -282,14 +321,11 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     @objc private func micButtonTapped() {
-        showTransientStatus(hasFullAccess ? "Start Yappatron, then return" : "Enable Full Access, then open Yappatron")
-        transcriptStore.saveKeyboardCommand("start")
+        prepareStartDictationRequest()
         guard let url = URL(string: "yappatron://dictation/start") else {
             return
         }
 
-        _ = openURLThroughResponderChain(url)
-        openURLThroughWebView(url)
         extensionContext?.open(url) { [weak self] success in
             DispatchQueue.main.async {
                 if success {
@@ -299,6 +335,17 @@ final class KeyboardViewController: UIInputViewController {
                 }
             }
         }
+    }
+
+    private func prepareStartDictationRequest() {
+        showTransientStatus(hasFullAccess ? "Opening Yappatron" : "Enable Full Access, then open Yappatron")
+        transcriptStore.saveKeyboardCommand("start")
+        guard let url = URL(string: "yappatron://dictation/start") else {
+            return
+        }
+
+        _ = openURLThroughResponderChain(url)
+        openURLThroughWebView(url)
     }
 
     private func openURLThroughWebView(_ url: URL) {
@@ -568,5 +615,29 @@ final class KeyboardViewController: UIInputViewController {
         }
 
         return false
+    }
+}
+
+private struct KeyboardStartLinkView: View {
+    let url: URL
+    let onTap: () -> Void
+
+    var body: some View {
+        Link(destination: url) {
+            HStack(spacing: 5) {
+                Image(systemName: "mic.fill")
+                    .font(.caption.weight(.semibold))
+                Text("Start")
+                    .font(.footnote.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .foregroundStyle(.white)
+            .background(Color.accentColor)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded { onTap() })
+        .accessibilityLabel("Start dictation")
     }
 }
