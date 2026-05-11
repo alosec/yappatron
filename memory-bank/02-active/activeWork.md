@@ -143,6 +143,8 @@ Current iOS output model:
   - Yappatron keyboard auto-insert via a queued tagged pasteboard bridge.
   - Optional return key after keyboard insertion.
 - Keyboard extension now polls while visible and inserts queued chunks once, instead of only exposing the latest chunk.
+- Keyboard extension now has a Spokenly-style dictation flow: start dictation deep-links to the companion app, the app starts listening and publishes live state, the keyboard streams live transcript deltas into the active input, and the checkmark commits remaining text / requests stop.
+- The keyboard bridge tags live state, finalized chunks, and keyboard commands separately; recording state expires if the app stops publishing heartbeats, so the keyboard should fall back to an honest "Start Dictation" state instead of pretending to record after iOS kills the app.
 - Auto-start on app open is available for the "keep listening, keep sending" workflow, within iOS background-audio limits.
 
 ## What's Done This Session

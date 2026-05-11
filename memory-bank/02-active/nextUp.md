@@ -56,6 +56,8 @@ Pairs naturally with the broader "build this into the agent product" plan — on
    - First-run Local-mode test on device after the 2026-05-11 recognition-task restart patch
    - Deepgram endpointing test: confirm chunks now land at complete-thought boundaries, not every short final fragment
    - Type-anywhere keyboard flow: confirm queued chunks insert in order and no earlier utterances are dropped
+   - Spokenly-style keyboard dictation flow: tap `Start Dictation`, launch Yappatron, start recording, swipe back, and confirm live transcript deltas stream into the active input
+   - Confirm checkmark finish does not duplicate finalized chunks after live streaming has already inserted them
    - Trust the refreshed Personal Team profile on device if direct launch is blocked after install
    - Eventually a paid Apple Developer Program path with App Group entitlement for cleaner companion-app/keyboard sharing
 
@@ -68,6 +70,7 @@ Pairs naturally with the broader "build this into the agent product" plan — on
 - ✓ **Input focus locking MVP shipped** (2026-05-11) — capture focused input via Accessibility, lock/unlock affordance, route partial/final/refinement typing through locked destination, pause if target disappears
 - ✓ **Input focus lock UX hardening shipped** (2026-05-11) — locked-window outline, recent-input menu locking, `⌃⌥⌘L` plus key-monitor fallback, continuous bottom-line indicator style, Codex auto-enter settle delay
 - ✓ **RMS-reactive bottom indicator validated** (2026-05-11) — live test confirmed the continuous bar now stays calm on silence and responds correctly to speech amplitude
+- ✓ **iOS keyboard dictation UX pass** (2026-05-11) — URL handoff from keyboard to app, live dictation state bridge with stale-state heartbeat, live delta insertion into active input, checkmark stop/commit, and simplified main app
 - ✓ **Hybrid diarization shipped** (2026-05-08) — Deepgram word-level segmentation + local FluidAudio embedding override, 0.45 cosine threshold, 0.3s min run, race-fix for typing waiting on override task
 - ✓ **`feature/local-segmenter` branched** (2026-05-08) — experimental local-only diarization preserved off-main; FluidAudio segmentation was coarser than Deepgram's word-level boundaries in real testing
 - ✓ **FluidAudio 0.9.1 → 0.14.4** (2026-05-08) — Swift 6.3 toolchain compatibility; updated `LocalSTTProvider.loadModels(from:)` and `BatchProcessor` decoder-state API

@@ -2,15 +2,15 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = DictationViewModel()
+    @State private var settingsExpanded = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 18) {
                     heroSection
-                    outputsSection
-                    engineSection
                     liveSection
+                    settingsSection
                     if viewModel.usesDeepgram && !viewModel.speakerLabels.seenIDs.isEmpty {
                         speakersSection
                     }
@@ -30,6 +30,9 @@ struct ContentView: View {
             .onAppear {
                 viewModel.autoStartIfNeeded()
             }
+            .onOpenURL { url in
+                viewModel.handleIncomingURL(url)
+            }
             .onChange(of: viewModel.autoStartListening) { _, _ in
                 viewModel.autoStartIfNeeded()
             }
@@ -38,6 +41,24 @@ struct ContentView: View {
 
     private var heroSection: some View {
         VStack(spacing: 18) {
+            if viewModel.keyboardLaunchMessageVisible {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.backward.to.line.compact")
+                        .font(.title3.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Dictation enabled")
+                            .font(.headline)
+                        Text("Swipe back to your previous app. The Yappatron keyboard will stream into the active input.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
             HStack(spacing: 10) {
                 Label(viewModel.status.label, systemImage: statusIconName)
                     .font(.subheadline.weight(.semibold))
@@ -92,6 +113,22 @@ struct ContentView: View {
         }
     }
 
+    private var settingsSection: some View {
+        DisclosureGroup(isExpanded: $settingsExpanded) {
+            VStack(alignment: .leading, spacing: 14) {
+                outputsSection
+                engineSection
+            }
+            .padding(.top, 12)
+        } label: {
+            Label("Settings", systemImage: "slider.horizontal.3")
+                .font(.headline)
+        }
+        .padding(16)
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     private var outputsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Send To")
@@ -140,9 +177,6 @@ struct ContentView: View {
                     .foregroundStyle(.red)
             }
         }
-        .padding(16)
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var engineSection: some View {
@@ -182,9 +216,6 @@ struct ContentView: View {
                 }
             }
         }
-        .padding(16)
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var liveSection: some View {
@@ -213,8 +244,9 @@ struct ContentView: View {
             }
 
             Text(viewModel.transcript.isEmpty ? " " : viewModel.transcript)
-                .font(.body)
-                .frame(maxWidth: .infinity, minHeight: 142, alignment: .topLeading)
+                .font(.title3)
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
                 .padding(14)
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 8))

@@ -84,6 +84,7 @@ final class DictationViewModel: ObservableObject {
     @Published private(set) var outputEvents: [TranscriptOutputEvent] = []
     @Published private(set) var deliveredUtteranceCount: Int = 0
     @Published private(set) var lastDeliveredText: String = ""
+    @Published var keyboardLaunchMessageVisible = false
 
     let speakerLabels = SpeakerLabelStore()
     private let webhookClient = WebhookClient()
@@ -110,6 +111,9 @@ final class DictationViewModel: ObservableObject {
     private var audioContinuation: AsyncStream<Data>.Continuation?
     private var audioSendTask: Task<Void, Never>?
     private var localDeliveryTask: Task<Void, Never>?
+    private var keyboardCommandTask: Task<Void, Never>?
+    private var lastKeyboardCommandAt: TimeInterval = 0
+    private var lastDictationStatePublishedAt: TimeInterval = 0
     private var lastDeliveredLocalTranscript = ""
     private var sessionStartedAt = Date()
     private var lastDeliveryDate = Date()
@@ -136,6 +140,7 @@ final class DictationViewModel: ObservableObject {
         webhookToken = UserDefaults.standard.string(forKey: DefaultsKeys.webhookToken) ?? ""
         streamToWebhook = UserDefaults.standard.bool(forKey: DefaultsKeys.streamToWebhook)
         sharedStore.pressReturnAfterInsert = pressReturnAfterSend
+        publishDictationState()
 
         webhookClient.onResult = { [weak self] result in
             Task { @MainActor in
@@ -187,11 +192,11 @@ final class DictationViewModel: ObservableObject {
     var recordButtonTitle: String {
         switch status {
         case .idle, .failed:
-            return "Start Full Send"
+            return "Start Listening"
         case .connecting:
             return "Connecting"
         case .listening:
-            return "Stop Full Send"
+            return "Stop Listening"
         case .finishing:
             return "Finishing"
         }
@@ -210,6 +215,25 @@ final class DictationViewModel: ObservableObject {
         didAutoStart = true
         Task {
             await startRecording()
+        }
+    }
+
+    func handleIncomingURL(_ url: URL) {
+        guard url.scheme == "yappatron" else { return }
+
+        let parts = [url.host, url.path]
+            .compactMap { $0 }
+            .joined(separator: "/")
+
+        guard parts.contains("dictation") || parts.contains("start") else {
+            return
+        }
+
+        keyboardLaunchMessageVisible = true
+        if !isRecording {
+            Task {
+                await startRecording()
+            }
         }
     }
 
@@ -261,6 +285,8 @@ final class DictationViewModel: ObservableObject {
 
             status = .connecting
             UIApplication.shared.isIdleTimerDisabled = true
+            publishDictationState()
+            startKeyboardCommandPolling()
 
             switch backend {
             case .local:
@@ -270,9 +296,11 @@ final class DictationViewModel: ObservableObject {
             }
 
             status = .listening
+            publishDictationState()
         } catch {
             await cleanUpRecording()
             status = .failed(error.localizedDescription)
+            publishDictationState()
         }
     }
 
@@ -283,6 +311,7 @@ final class DictationViewModel: ObservableObject {
 
         status = .finishing
         UIApplication.shared.isIdleTimerDisabled = false
+        publishDictationState()
 
         if let localRecognizer {
             localDeliveryTask?.cancel()
@@ -291,6 +320,8 @@ final class DictationViewModel: ObservableObject {
             deliverLocalTranscriptIfNeeded(finalText, force: true)
             self.localRecognizer = nil
             status = .idle
+            publishDictationState()
+            stopKeyboardCommandPolling()
             return
         }
 
@@ -309,6 +340,8 @@ final class DictationViewModel: ObservableObject {
         deepgramClient = nil
 
         status = .idle
+        publishDictationState()
+        stopKeyboardCommandPolling()
     }
 
     func copyTranscript() {
@@ -336,6 +369,7 @@ final class DictationViewModel: ObservableObject {
     private func receiveTranscript(_ text: String) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = trimmedText
+        publishDictationState()
     }
 
     private func handleDiarizedFinal(_ runs: [DiarizedRun]) {
@@ -524,6 +558,7 @@ final class DictationViewModel: ObservableObject {
 
     private func cleanUpRecording() async {
         UIApplication.shared.isIdleTimerDisabled = false
+        stopKeyboardCommandPolling()
         localDeliveryTask?.cancel()
         localDeliveryTask = nil
 
@@ -539,10 +574,71 @@ final class DictationViewModel: ObservableObject {
         audioSendTask = nil
         await deepgramClient?.disconnect()
         deepgramClient = nil
+        publishDictationState(isRecordingOverride: false)
     }
 
     private func failRecording(_ message: String) async {
         status = .failed(message)
         await cleanUpRecording()
+        publishDictationState(isRecordingOverride: false)
+    }
+
+    private func publishDictationState(isRecordingOverride: Bool? = nil) {
+        let updatedAt = Date()
+        lastDictationStatePublishedAt = updatedAt.timeIntervalSince1970
+        sharedStore.saveDictationState(
+            isRecording: isRecordingOverride ?? isRecording,
+            liveTranscript: transcript,
+            updatedAt: updatedAt
+        )
+    }
+
+    private func publishDictationHeartbeatIfNeeded() {
+        guard isRecording else {
+            return
+        }
+
+        if Date().timeIntervalSince1970 - lastDictationStatePublishedAt >= 1 {
+            publishDictationState()
+        }
+    }
+
+    private func startKeyboardCommandPolling() {
+        keyboardCommandTask?.cancel()
+        keyboardCommandTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                await MainActor.run {
+                    self?.handlePendingKeyboardCommand()
+                    self?.publishDictationHeartbeatIfNeeded()
+                }
+            }
+        }
+    }
+
+    private func stopKeyboardCommandPolling() {
+        keyboardCommandTask?.cancel()
+        keyboardCommandTask = nil
+    }
+
+    private func handlePendingKeyboardCommand() {
+        guard let command = sharedStore.latestKeyboardCommand(after: lastKeyboardCommandAt) else {
+            return
+        }
+
+        lastKeyboardCommandAt = command.updatedAt
+
+        switch command.command {
+        case "start":
+            if !isRecording {
+                Task { await startRecording() }
+            }
+        case "stop":
+            if isRecording {
+                Task { await stopRecording() }
+            }
+        default:
+            break
+        }
     }
 }
