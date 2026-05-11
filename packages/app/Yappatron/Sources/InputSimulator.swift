@@ -80,6 +80,10 @@ class InputSimulator {
         let role: String?
         let subrole: String?
 
+        var isCurrentProcess: Bool {
+            pid == ProcessInfo.processInfo.processIdentifier
+        }
+
         var displayName: String {
             if let windowTitle, !windowTitle.isEmpty {
                 return "\(appName) — \(windowTitle)"
@@ -132,6 +136,15 @@ class InputSimulator {
             }
 
             return RestoreToken(previousApp: previousApp, lockedPID: pid)
+        }
+
+        func outlineFrame() -> NSRect? {
+            let outlineElement = window ?? element
+            guard let frame = InputSimulator.accessibilityFrame(for: outlineElement) else {
+                return nil
+            }
+
+            return InputSimulator.cocoaFrame(fromAccessibilityFrame: frame).insetBy(dx: -5, dy: -5)
         }
 
         private func runningApplication() -> NSRunningApplication? {
@@ -399,6 +412,84 @@ class InputSimulator {
         }
 
         return (value as! AXUIElement)
+    }
+
+    private static func accessibilityFrame(for element: AXUIElement) -> CGRect? {
+        guard let position = cgPointAttribute(kAXPositionAttribute as CFString, from: element),
+              let size = cgSizeAttribute(kAXSizeAttribute as CFString, from: element),
+              size.width > 0,
+              size.height > 0 else {
+            return nil
+        }
+
+        return CGRect(origin: position, size: size)
+    }
+
+    private static func cgPointAttribute(_ attribute: CFString, from element: AXUIElement) -> CGPoint? {
+        var value: AnyObject?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard result == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        let axValue = value as! AXValue
+        guard AXValueGetType(axValue) == .cgPoint else {
+            return nil
+        }
+
+        var point = CGPoint.zero
+        guard AXValueGetValue(axValue, .cgPoint, &point) else {
+            return nil
+        }
+
+        return point
+    }
+
+    private static func cgSizeAttribute(_ attribute: CFString, from element: AXUIElement) -> CGSize? {
+        var value: AnyObject?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard result == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        let axValue = value as! AXValue
+        guard AXValueGetType(axValue) == .cgSize else {
+            return nil
+        }
+
+        var size = CGSize.zero
+        guard AXValueGetValue(axValue, .cgSize, &size) else {
+            return nil
+        }
+
+        return size
+    }
+
+    private static func cocoaFrame(fromAccessibilityFrame frame: CGRect) -> NSRect {
+        let screens = NSScreen.screens
+        let maxY = screens.map { $0.frame.maxY }.max() ?? (NSScreen.main?.frame.maxY ?? frame.maxY)
+        let converted = CGRect(
+            x: frame.minX,
+            y: maxY - frame.minY - frame.height,
+            width: frame.width,
+            height: frame.height
+        )
+
+        if intersectsAnyScreen(converted, screens: screens) {
+            return converted
+        }
+
+        return frame
+    }
+
+    private static func intersectsAnyScreen(_ frame: CGRect, screens: [NSScreen]) -> Bool {
+        screens.contains { screen in
+            screen.frame.intersects(frame)
+        }
     }
 
     private static func frontmostAppUsesPasteFallback() -> Bool {

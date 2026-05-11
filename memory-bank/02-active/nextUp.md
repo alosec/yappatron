@@ -4,38 +4,30 @@
 
 ## TOP PRIORITY (next session)
 
-### Input focus lock UX hardening — P0
+### Validate input focus lock hardening — P0
 
-Input focus locking MVP shipped on 2026-05-11, but the first live test showed UX gaps that should be addressed before treating it as solid.
+Input focus locking MVP and first UX hardening pass shipped on 2026-05-11. The hardening pass addressed the first live-test gaps: visible lock state, shortcut fallback, recent-input menu locking, bottom-line indicator, and a Codex auto-enter timing improvement.
 
 Follow-up items:
-- Fix or replace the current lock hotkey. The shipped shortcut did not appear to trigger in the live test; likely causes include shortcut conflict, global registration failure, or stale app process confusion.
-- Add a visual outline around the locked window whenever a lock is active.
-- Add explicit lock/unlock success/failure feedback so the user is never guessing whether Yappatron captured the target.
-- Consider a click-to-lock or menu-listed recent-input flow if hotkeys remain unreliable.
+- Smoke-test `⌃⌥⌘L` plus the local/global monitor fallback in Codex and other target apps.
+- Verify the locked-window outline tracks window moves/resizes and behaves correctly on multiple displays.
+- Verify the bottom-line indicator tracks the active display well enough for daily use.
+- Re-test `Press Enter After Speech` in Codex after the new pre-Return settle delay.
+- Consider click-to-lock only if hotkey + recent-input menu locking still feel unreliable.
 
 Pairs naturally with the broader "build this into the agent product" plan — once the typing destination is stable, dictating into an agent session is robust.
 
 ## Other Priorities
 
-1. **Codex auto-enter bug** — P1
-   - User observed that "Press Enter After Speech" does not seem to work reliably in Codex.
-   - Spelled Codex. Do not file as "codecs."
-   - Investigate whether this is due to Codex's input surface, paste fallback timing, focus restoration, or Enter being sent before Codex accepts the inserted text.
-
-2. **Bottom-line indicator option** — P1
-   - Add an option for the indicator to be a line along the bottom of the active display instead of the floating psychedelic orb.
-   - Should track the active display and stay out of the way during overlay-assistant workflows.
-
-3. **Auto-clear speaker rename map on new session** — P1
+1. **Auto-clear speaker rename map on new session** — P1
    - Mom's foot-gun: today's "Mom" mapping persists into tomorrow's "Callie" conversation
    - Auto-clear on transcription start, OR add a prominent "new session" menu action
 
-4. **Confirm local Parakeet backend works under FluidAudio 0.14.4** — P1
+2. **Confirm local Parakeet backend works under FluidAudio 0.14.4** — P1
    - We bumped the dep and updated the two API call sites; release builds clean but local mode hasn't been smoke-tested under the new version
    - Quick verification: enable Local backend, dictate, confirm transcript is correct
 
-5. **Model currency check (research done 2026-05-08)** — P1
+3. **Model currency check (research done 2026-05-08)** — P1
    - Currently using `StreamingEouAsrManager` with `parakeetEou320` (EOU 120M). FluidAudio 0.14.4 we're on is itself current.
    - Available upgrades within FluidAudio (no dep bump needed):
      - `StreamingNemotronAsrManager` — NVIDIA Nemotron streaming with encoder cache, 160/320/1600ms chunks. New in 0.13.7. Likely a measurable upgrade in latency / accuracy for English dictation.
@@ -47,32 +39,33 @@ Pairs naturally with the broader "build this into the agent product" plan — on
    - Suggested first move: drop in `StreamingNemotronAsrManager` as the local backend, A/B against current `StreamingEouAsrManager`. Same package, same install path.
    - WhisperKit is no longer competitive for sub-300ms streaming on Apple Silicon (Parakeet is 2–3x faster).
 
-6. **Ensemble diarization** — P2
+4. **Ensemble diarization** — P2
    - Deepgram + local segmentation as parallel signals, vote per word
    - Local identity (FluidAudio embedding) remains the source of truth for who
    - Cost: continuous local diarization in real time
    - Benefit: catches mid-sentence speaker changes Deepgram misses
    - Only worth doing if hard-mode quality on Deepgram alone proves insufficient for the agent product use case
 
-7. **Backspacing UX** — P2
+5. **Backspacing UX** — P2
    - User flagged as disliked but punted in this session
    - Need to clarify the actual failure mode before iterating
 
-8. **Retroactive rename rewriting** — P3
+6. **Retroactive rename rewriting** — P3
    - Open question whether reaching back to edit already-typed text is worth the engineering vs. just typing forward and cleaning up post-session
 
-9. **iPhone validation backlog** — P2
+7. **iPhone validation backlog** — P2
    - First-run Local-mode test on device
    - Type-anywhere keyboard flow
    - Eventually a paid Apple Developer Program path with App Group entitlement for cleaner companion-app/keyboard sharing
 
-10. **Hot-swap backends without restart** — P3
-11. **Real-time character-level streaming** — P3
-12. **Add Soniox as third backend** — P3
+8. **Hot-swap backends without restart** — P3
+9. **Real-time character-level streaming** — P3
+10. **Add Soniox as third backend** — P3
 
 ## Recently Completed
 
 - ✓ **Input focus locking MVP shipped** (2026-05-11) — capture focused input via Accessibility, lock/unlock affordance, route partial/final/refinement typing through locked destination, pause if target disappears
+- ✓ **Input focus lock UX hardening shipped** (2026-05-11) — locked-window outline, recent-input menu locking, `⌃⌥⌘L` plus key-monitor fallback, bottom-line indicator style, Codex auto-enter settle delay
 - ✓ **Hybrid diarization shipped** (2026-05-08) — Deepgram word-level segmentation + local FluidAudio embedding override, 0.45 cosine threshold, 0.3s min run, race-fix for typing waiting on override task
 - ✓ **`feature/local-segmenter` branched** (2026-05-08) — experimental local-only diarization preserved off-main; FluidAudio segmentation was coarser than Deepgram's word-level boundaries in real testing
 - ✓ **FluidAudio 0.9.1 → 0.14.4** (2026-05-08) — Swift 6.3 toolchain compatibility; updated `LocalSTTProvider.loadModels(from:)` and `BatchProcessor` decoder-state API

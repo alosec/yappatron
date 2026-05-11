@@ -22,6 +22,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var statusItem: NSStatusItem!
     var overlayWindow: OverlayWindow?
     var overlayController: OverlayWindowController?
+    var focusLockWindow: FocusLockOverlayWindow?
+    var focusLockController: FocusLockOverlayWindowController?
 
     // Core
     var engine: TranscriptionEngine!
@@ -33,6 +35,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var togglePauseHotKey: HotKey?
     var toggleOverlayHotKey: HotKey?
     var toggleInputFocusLockHotKey: HotKey?
+    var inputFocusLockLocalMonitor: Any?
+    var inputFocusLockGlobalMonitor: Any?
     var pushToTalkHotKey: HotKey?
     var pushToTalkLocalMonitor: Any?
     var pushToTalkGlobalMonitor: Any?
@@ -43,7 +47,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @Published var currentTypedText = "" // What we've typed so far (for backspace corrections)
     var lockedTextLength = 0             // Characters confirmed by is_final (never backspace into these)
     var lockedInputFocusTarget: InputSimulator.InputFocusTarget?
+    var recentInputFocusTarget: InputSimulator.InputFocusTarget?
     var inputFocusLockAlertVisible = false
+    var focusObservationTimer: Timer?
+    var lastInputFocusLockShortcutAt = Date.distantPast
 
     // Settings
     var pressEnterAfterSpeech: Bool {
@@ -59,6 +66,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var dictationMode: DictationMode {
         get { DictationMode.current }
         set { DictationMode.current = newValue }
+    }
+
+    var indicatorStyle: OverlayViewModel.OrbStyle {
+        get {
+            guard let rawValue = UserDefaults.standard.string(forKey: "indicatorStyle"),
+                  let style = OverlayViewModel.OrbStyle(rawValue: rawValue) else {
+                return .voronoi
+            }
+
+            return style
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "indicatorStyle")
+        }
     }
 
     // Combine
@@ -110,6 +131,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupEngineCallbacks()
         observeEngineStatus()
         observeHotKeyPreferences()
+        startFocusObservation()
 
         // Initialize batch processor in background (if enabled)
         if let batchProcessor = batchProcessor {
@@ -134,6 +156,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     nonisolated func applicationWillTerminate(_ notification: Notification) {
         Task { @MainActor in
+            focusObservationTimer?.invalidate()
+            unregisterInputFocusLockShortcut()
             engine.cleanup()
         }
     }
@@ -162,6 +186,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         withTypingDestination(logRejection: logRejection) {
             inputSimulator.applyTextUpdate(from: oldText, to: newText)
         }
+    }
+
+    func finishUtteranceTyping() {
+        inputSimulator.typeString(" ")
+
+        if pressEnterAfterSpeech {
+            Thread.sleep(forTimeInterval: 0.12)
+            inputSimulator.pressEnter()
+        }
+
+        currentTypedText = ""
     }
 
     private func prepareTypingDestination(logRejection: Bool) -> TypingDestination? {
@@ -193,6 +228,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         isPaused = true
         isPushToTalkHeld = false
         engine.stopCapture()
+        focusLockWindow?.orderOut(nil)
         updateOverlayStatus()
         updateStatusIcon()
 
@@ -214,6 +250,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         alert.addButton(withTitle: "OK")
         alert.runModal()
         inputFocusLockAlertVisible = false
+    }
+
+    private func startFocusObservation() {
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshFocusLockUI()
+                self?.refreshRecentInputFocusTarget()
+            }
+        }
+
+        RunLoop.main.add(timer, forMode: .common)
+        focusObservationTimer = timer
+    }
+
+    private func refreshFocusLockUI() {
+        guard let target = lockedInputFocusTarget else {
+            focusLockWindow?.orderOut(nil)
+            return
+        }
+
+        guard let frame = target.outlineFrame() else {
+            handleInputFocusLockLost()
+            return
+        }
+
+        focusLockWindow?.show(frame: frame)
+    }
+
+    private func refreshRecentInputFocusTarget() {
+        guard let target = InputSimulator.captureFocusedTextInputTarget(),
+              !target.isCurrentProcess else {
+            return
+        }
+
+        recentInputFocusTarget = target
     }
 
     // MARK: - Engine Setup
@@ -342,16 +413,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             // If ENABLED (local only), wait for refinement to complete
             let needsRefinement = enableDualPassRefinement && !STTBackend.current.returnsPunctuatedText
             if !needsRefinement {
-                // Add trailing space
-                inputSimulator.typeString(" ")
-
-                // Press enter if enabled
-                if pressEnterAfterSpeech {
-                    inputSimulator.pressEnter()
-                }
-
-                // Reset for next utterance
-                currentTypedText = ""
+                finishUtteranceTyping()
             }
             // If dual-pass enabled, spacing/enter will be added in handleRefinementComplete()
         }
@@ -363,16 +425,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             // Update tracking to reflect refined text
             currentTypedText = refinedText
 
-            // Add trailing space for next utterance
-            inputSimulator.typeString(" ")
-
-            // Press enter if enabled
-            if pressEnterAfterSpeech {
-                inputSimulator.pressEnter()
-            }
-
-            // Reset for next utterance
-            currentTypedText = ""
+            finishUtteranceTyping()
         }
     }
 
@@ -570,8 +623,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Orb Style submenu
-        let orbStyleItem = NSMenuItem(title: "Orb Style", action: nil, keyEquivalent: "")
+        // Indicator Style submenu
+        let orbStyleItem = NSMenuItem(title: "Indicator Style", action: nil, keyEquivalent: "")
         let orbStyleMenu = NSMenu()
 
         let currentStyle = overlayWindow?.overlayViewModel.orbStyle ?? .voronoi
@@ -616,7 +669,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             menu.addItem(statusItem)
             menu.addItem(NSMenuItem(title: "Unlock Input Focus (\(shortcut))", action: #selector(toggleInputFocusLockAction), keyEquivalent: ""))
         } else {
-            menu.addItem(NSMenuItem(title: "Lock Input Focus to Current Field (\(shortcut))", action: #selector(toggleInputFocusLockAction), keyEquivalent: ""))
+            let targetName = recentInputFocusTarget?.displayName ?? "Current Field"
+            menu.addItem(NSMenuItem(title: "Lock Input Focus to \(targetName) (\(shortcut))", action: #selector(toggleInputFocusLockAction), keyEquivalent: ""))
         }
     }
 
@@ -655,7 +709,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func setupOverlay() {
         overlayWindow = OverlayWindow()
+        overlayWindow?.overlayViewModel.orbStyle = indicatorStyle
         overlayController = OverlayWindowController(window: overlayWindow!)
+
+        focusLockWindow = FocusLockOverlayWindow()
+        focusLockController = FocusLockOverlayWindowController(window: focusLockWindow!)
     }
 
     func toggleOverlay() {
@@ -692,14 +750,72 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
 
-        toggleInputFocusLockHotKey = HotKey(keyCombo: HotKeyPreferences.inputFocusLockCombo)
+        registerInputFocusLockShortcut()
+
+        registerPushToTalkHotKey()
+    }
+
+    func registerInputFocusLockShortcut() {
+        unregisterInputFocusLockShortcut()
+
+        let combo = HotKeyPreferences.inputFocusLockCombo
+
+        toggleInputFocusLockHotKey = HotKey(keyCombo: combo)
         toggleInputFocusLockHotKey?.keyDownHandler = { [weak self] in
             Task { @MainActor in
-                self?.toggleInputFocusLockAction()
+                self?.triggerInputFocusLockShortcut()
             }
         }
 
-        registerPushToTalkHotKey()
+        inputFocusLockLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.eventMatchesInputFocusLockShortcut(event) == true {
+                Task { @MainActor in
+                    self?.triggerInputFocusLockShortcut()
+                }
+            }
+            return event
+        }
+
+        inputFocusLockGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard self?.eventMatchesInputFocusLockShortcut(event) == true else { return }
+            Task { @MainActor in
+                self?.triggerInputFocusLockShortcut()
+            }
+        }
+    }
+
+    func unregisterInputFocusLockShortcut() {
+        toggleInputFocusLockHotKey = nil
+
+        if let inputFocusLockLocalMonitor = inputFocusLockLocalMonitor {
+            NSEvent.removeMonitor(inputFocusLockLocalMonitor)
+            self.inputFocusLockLocalMonitor = nil
+        }
+
+        if let inputFocusLockGlobalMonitor = inputFocusLockGlobalMonitor {
+            NSEvent.removeMonitor(inputFocusLockGlobalMonitor)
+            self.inputFocusLockGlobalMonitor = nil
+        }
+    }
+
+    func eventMatchesInputFocusLockShortcut(_ event: NSEvent) -> Bool {
+        let combo = HotKeyPreferences.inputFocusLockCombo
+        guard UInt32(event.keyCode) == combo.carbonKeyCode else {
+            return false
+        }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags == combo.modifiers.intersection(.deviceIndependentFlagsMask)
+    }
+
+    func triggerInputFocusLockShortcut() {
+        let now = Date()
+        guard now.timeIntervalSince(lastInputFocusLockShortcutAt) > 0.25 else {
+            return
+        }
+
+        lastInputFocusLockShortcutAt = now
+        toggleInputFocusLockAction()
     }
 
     func registerPushToTalkHotKey() {
@@ -846,7 +962,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func lockCurrentFocusedInput() {
-        guard let target = InputSimulator.captureFocusedTextInputTarget() else {
+        let focusedTarget = InputSimulator.captureFocusedTextInputTarget()
+        let target = focusedTarget?.isCurrentProcess == false ? focusedTarget : recentInputFocusTarget
+
+        guard let target else {
             showInputFocusLockAlert(
                 title: "No Text Input Focused",
                 message: "Click into the text field Yappatron should type into, then press \(HotKeyPreferences.displayString(for: HotKeyPreferences.inputFocusLockCombo))."
@@ -855,6 +974,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         lockedInputFocusTarget = target
+        recentInputFocusTarget = target
+        refreshFocusLockUI()
         updateStatusIcon()
         showOverlay()
         NSLog("[Yappatron] Input focus locked to \(target.displayName)")
@@ -864,6 +985,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         guard let target = lockedInputFocusTarget else { return }
 
         lockedInputFocusTarget = nil
+        focusLockWindow?.orderOut(nil)
         updateStatusIcon()
         updateOverlayStatus()
         NSLog("[Yappatron] Input focus unlocked from \(target.displayName)")
@@ -1090,7 +1212,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     @objc func selectOrbStyle(_ sender: NSMenuItem) {
         if let style = sender.representedObject as? OverlayViewModel.OrbStyle {
+            indicatorStyle = style
             overlayWindow?.overlayViewModel.orbStyle = style
+            overlayWindow?.positionAtBottom()
         }
     }
 
@@ -1108,6 +1232,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     @objc func quitAction() {
+        focusObservationTimer?.invalidate()
+        unregisterInputFocusLockShortcut()
         unregisterPushToTalkInput()
         engine.cleanup()
         NSApp.terminate(nil)
@@ -1143,6 +1269,7 @@ struct SettingsView: View {
 
             Section("Dictation") {
                 LabeledContent("Mode", value: DictationMode.current.title)
+                LabeledContent("Indicator", value: UserDefaults.standard.string(forKey: "indicatorStyle") ?? OverlayViewModel.OrbStyle.voronoi.rawValue)
                 Text("Change mode via the menu bar right-click menu")
                     .foregroundStyle(.secondary)
                     .font(.caption)
@@ -1156,6 +1283,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 390, height: 380)
+        .frame(width: 390, height: 400)
     }
 }

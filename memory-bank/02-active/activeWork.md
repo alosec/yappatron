@@ -4,7 +4,7 @@
 
 ## Current Focus
 
-**RECENTLY SHIPPED: Input focus locking MVP**
+**RECENTLY SHIPPED: Input focus locking + UX hardening**
 
 Yappatron now has an input focus locking MVP for multi-speaker / meeting-mode use. The user can designate the currently focused text input as the typing destination, and dictation writes are routed back to that destination even if the foreground app changes.
 
@@ -15,14 +15,17 @@ Shipped behavior:
 - Briefly refocuses the locked destination for typing, then restores the previously frontmost app.
 - If the locked target disappears, clears the lock and pauses instead of typing into the wrong app.
 - Prevents the floating orb overlay from becoming the key window when shown.
+- Adds a visible outline around the locked window and keeps it tracking window moves/resizes.
+- Tracks the most recent text input so the menu item can lock the intended destination even after the menu opens.
+- Changes the lock shortcut to `⌃⌥⌘L` and adds local/global key-monitor fallback in addition to Carbon hotkey registration.
+- Adds a bottom-line indicator style for the active display.
+- Adds a short settle delay before auto-enter to improve Codex/paste-fallback behavior.
 
-Live-test follow-ups from 2026-05-11:
-- Lock shortcut did not appear to work in the user's live test. Investigate shortcut conflict/registration and add better feedback when lock succeeds or fails.
-- Add a visual indicator around the locked window whenever Yappatron is locked to it.
-- Codex auto-enter bug: "Press Enter After Speech" does not seem to work reliably in Codex. Keep an eye on whether this is Codex-specific event handling, paste fallback timing, or focus-lock interaction.
-- Add an indicator style option where the active display gets a line at the bottom of the screen instead of the psychedelic floating orb.
+Validation follow-ups:
+- Smoke-test the locked-window outline on multiple displays and with moved/resized windows.
+- Re-test `Press Enter After Speech` in Codex. A 120ms settle delay was added before Return, but this still needs live confirmation.
 
-Next iteration should prioritize visible lock state and easier manual locking over more routing sophistication.
+Next iteration should prioritize any remaining reliability issues found in live use.
 
 **Prior iOS spike state:** The iOS webhook streaming pipeline (server + DNS + Caddy + iOS scaffolding) is shipped and infrastructure-ready, but the iPhone-side build/install loop on Friday night did not converge into something usable in time for the Callie call. Right call was to stop, sleep, record the call with normal tools, and post-process audio later.
 

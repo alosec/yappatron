@@ -31,11 +31,27 @@ class OverlayWindow: NSWindow {
     }
     
     func positionAtBottom() {
-        guard let screen = NSScreen.main else { return }
+        let screen = Self.activeScreen()
         let screenFrame = screen.visibleFrame
-        let x = screenFrame.midX - frame.width / 2
-        let y = screenFrame.minY + 80
-        setFrameOrigin(NSPoint(x: x, y: y))
+
+        switch overlayViewModel.orbStyle {
+        case .bottomLine:
+            hasShadow = false
+            setFrame(
+                NSRect(x: screenFrame.minX, y: screenFrame.minY + 3, width: screenFrame.width, height: 8),
+                display: true
+            )
+        case .voronoi, .concentricRings:
+            hasShadow = true
+            let size = NSSize(width: 100, height: 100)
+            let origin = NSPoint(x: screenFrame.midX - size.width / 2, y: screenFrame.minY + 80)
+            setFrame(NSRect(origin: origin, size: size), display: true)
+        }
+    }
+
+    private static func activeScreen() -> NSScreen {
+        let mouseLocation = NSEvent.mouseLocation
+        return NSScreen.screens.first { $0.frame.contains(mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
     }
 }
 
@@ -63,6 +79,7 @@ class OverlayViewModel: ObservableObject {
     enum OrbStyle: String, CaseIterable {
         case voronoi = "Voronoi Cells"
         case concentricRings = "Concentric Rings"
+        case bottomLine = "Bottom Line"
     }
 }
 
@@ -74,11 +91,15 @@ struct OverlayView: View {
             switch viewModel.orbStyle {
             case .voronoi:
                 VoronoiOrbView(colors: orbColors, speed: orbSpeed)
+                    .frame(width: 80, height: 80)
             case .concentricRings:
                 ConcentricRingsOrbView(colors: orbColors, speed: orbSpeed)
+                    .frame(width: 80, height: 80)
+            case .bottomLine:
+                BottomLineIndicatorView(colors: orbColors, speed: orbSpeed)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(width: 80, height: 80)
         .opacity(orbOpacity)
         .animation(.easeInOut(duration: 0.3), value: viewModel.isSpeaking)
         .animation(.easeInOut(duration: 0.3), value: viewModel.status)
@@ -149,6 +170,31 @@ struct OverlayView: View {
     }
 }
 
+// BOTTOM LINE INDICATOR - quiet active-display strip
+struct BottomLineIndicatorView: View {
+    let colors: [Color]
+    let speed: Double
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            let phase = (sin(time * speed * 2.2) + 1) / 2
+
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: colors.map { $0.opacity(0.65 + phase * 0.35) },
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 5)
+                .shadow(color: colors.first?.opacity(0.7) ?? .green.opacity(0.7), radius: 8, x: 0, y: 0)
+                .padding(.horizontal, 18)
+        }
+    }
+}
+
 // MARK: - Orb View Implementations
 
 // CONCENTRIC RINGS ORB - Radar/sound waves
@@ -173,6 +219,65 @@ struct ConcentricRingsOrbView: View {
                 }
             }
             .clipShape(Circle())
+        }
+    }
+}
+
+// MARK: - Focus Lock Outline
+
+class FocusLockOverlayWindow: NSWindow {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    init() {
+        super.init(
+            contentRect: .zero,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+
+        level = .statusBar
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        ignoresMouseEvents = true
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        contentView = NSHostingView(rootView: FocusLockOutlineView())
+    }
+
+    func show(frame: NSRect) {
+        setFrame(frame, display: true)
+        orderFrontRegardless()
+    }
+}
+
+class FocusLockOverlayWindowController: NSWindowController {
+    convenience init(window: FocusLockOverlayWindow) {
+        self.init(window: window as NSWindow)
+    }
+}
+
+struct FocusLockOutlineView: View {
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            let pulse = (sin(time * 3.0) + 1) / 2
+
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.0, green: 1.0, blue: 0.48),
+                            Color(red: 0.0, green: 0.76, blue: 1.0)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 3
+                )
+                .shadow(color: Color(red: 0.0, green: 1.0, blue: 0.55).opacity(0.45 + pulse * 0.25), radius: 10, x: 0, y: 0)
+                .padding(3)
         }
     }
 }

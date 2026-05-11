@@ -21,7 +21,17 @@ Implemented the first Mac input focus locking pass for Yappatron.
 
 ## Next Actions
 
-- Add visible lock feedback first: window outline on lock, clear unlock state, and failure feedback when capture does not happen.
-- Revisit the default lock shortcut or provide a non-hotkey locking flow if global hotkeys remain unreliable.
-- Add a bottom-line indicator option as an orb-style alternative.
-- Reproduce Codex auto-enter with and without focus lock enabled.
+- Smoke-test lock behavior in the installed app, especially Codex.
+- Verify the locked-window outline tracks moved/resized windows and multi-display setups.
+- Verify the bottom-line indicator feels better than the floating orb for overlay-assistant workflows.
+- Re-test Codex auto-enter with and without focus lock enabled.
+
+## Follow-Up Shipped Same Day
+
+- Added a non-interactive outline window around the locked target.
+- Added a 0.25s polling loop to keep the outline tracking the target frame and to remember the most recent non-Yappatron text input.
+- Changed the lock shortcut to `⌃⌥⌘L`.
+- Added local/global key-monitor fallback in addition to the Carbon hotkey registration.
+- Updated the menu item to lock the most recent text input when opening the menu steals focus.
+- Added `Bottom Line` as an indicator style alongside the two orb styles.
+- Added a 120ms delay before auto-enter after a final utterance to give paste-fallback surfaces such as Codex time to accept the inserted text before Return.

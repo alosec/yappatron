@@ -10,7 +10,7 @@ enum HotKeyPreferences {
     private static let pushToTalkKey = "pushToTalkHotKey"
 
     static var inputFocusLockCombo: KeyCombo {
-        KeyCombo(key: .l, modifiers: [.command, .option])
+        KeyCombo(key: .l, modifiers: [.control, .option, .command])
     }
 
     static var pushToTalkCombo: KeyCombo {
