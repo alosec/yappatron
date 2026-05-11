@@ -23,7 +23,7 @@ Implemented the first Mac input focus locking pass for Yappatron.
 
 - Smoke-test lock behavior in the installed app, especially Codex.
 - Verify the locked-window outline tracks moved/resized windows and multi-display setups.
-- Verify the bottom-line indicator feels better than the floating orb for overlay-assistant workflows.
+- Verify the continuous bottom-line indicator feels better than the floating orb for overlay-assistant workflows.
 - Re-test Codex auto-enter with and without focus lock enabled.
 
 ## Follow-Up Shipped Same Day
@@ -35,3 +35,7 @@ Implemented the first Mac input focus locking pass for Yappatron.
 - Updated the menu item to lock the most recent text input when opening the menu steals focus.
 - Added `Bottom Line` as an indicator style alongside the two orb styles.
 - Added a 120ms delay before auto-enter after a final utterance to give paste-fallback surfaces such as Codex time to accept the inserted text before Return.
+
+## Indicator Correction
+
+The segmented fake waveform looked wrong and implied real voice responsiveness that was not actually wired. Replaced it with a single continuous rainbow bar that subtly pulses and wiggles as one piece. Speaking state only increases motion/intensity; true audio-reactive visualization remains a separate future feature that would need a real audio-level signal from the capture pipeline.

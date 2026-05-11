@@ -38,7 +38,7 @@ class OverlayWindow: NSWindow {
         case .bottomLine:
             hasShadow = false
             setFrame(
-                NSRect(x: screenFrame.minX, y: screenFrame.minY + 2, width: screenFrame.width, height: 18),
+                NSRect(x: screenFrame.minX, y: screenFrame.minY + 2, width: screenFrame.width, height: 14),
                 display: true
             )
         case .voronoi, .concentricRings:
@@ -176,54 +176,64 @@ struct BottomLineIndicatorView: View {
     let speed: Double
     let isSpeaking: Bool
 
-    private let barCount = 72
-
     var body: some View {
         TimelineView(.animation) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
 
             GeometryReader { geometry in
-                let travel = CGFloat(time * speed * (isSpeaking ? 7.5 : 3.2))
-                let maxHeight = geometry.size.height
+                let pulse = (sin(time * speed * (isSpeaking ? 4.2 : 2.1)) + 1) / 2
+                let phase = CGFloat(time * speed * (isSpeaking ? 3.4 : 1.7))
+                let thickness: CGFloat = isSpeaking ? 8.0 + CGFloat(pulse) * 2.0 : 6.0 + CGFloat(pulse) * 1.2
+                let amplitude: CGFloat = isSpeaking ? 2.2 : 0.9
 
-                HStack(alignment: .bottom, spacing: 2) {
-                    ForEach(0..<barCount, id: \.self) { index in
-                        let normalized = Double(index) / Double(max(barCount - 1, 1))
-                        let level = waveformLevel(index: index, travel: travel)
-                        let height = 4 + level * (maxHeight - 4)
-
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(color(at: normalized).opacity(isSpeaking ? 0.95 : 0.75))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: height)
-                    }
-                }
-                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottom)
-                .shadow(color: colors.first?.opacity(isSpeaking ? 0.95 : 0.55) ?? .green.opacity(0.6), radius: isSpeaking ? 10 : 6, x: 0, y: 0)
+                WigglyBottomBarShape(phase: phase, amplitude: amplitude, thickness: thickness)
+                    .fill(
+                        LinearGradient(
+                            colors: colors.map { $0.opacity(isSpeaking ? 0.95 : 0.78) },
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .shadow(color: colors.first?.opacity(isSpeaking ? 0.9 : 0.55) ?? .green.opacity(0.6), radius: isSpeaking ? 10 : 7, x: 0, y: 0)
+                    .offset(y: CGFloat(sin(time * speed * 1.6)) * (isSpeaking ? 1.1 : 0.4))
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 14)
             .padding(.vertical, 2)
         }
     }
+}
 
-    private func waveformLevel(index: Int, travel: CGFloat) -> CGFloat {
-        let position = CGFloat(index)
-        let base = sin((position * 0.42) + travel)
-        let detail = sin((position * 1.17) - travel * 1.35)
-        let crest = sin((position * 0.13) + travel * 0.55)
-        let mixed = abs(base * 0.58 + detail * 0.27 + crest * 0.15)
-        let floor: CGFloat = isSpeaking ? 0.18 : 0.08
-        let gain: CGFloat = isSpeaking ? 0.82 : 0.34
+struct WigglyBottomBarShape: Shape {
+    let phase: CGFloat
+    let amplitude: CGFloat
+    let thickness: CGFloat
 
-        return min(1.0, floor + mixed * gain)
-    }
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let sampleCount = 56
+        let centerY = rect.midY
+        let frequency: CGFloat = 2.0 * .pi * 2.2
 
-    private func color(at normalizedPosition: Double) -> Color {
-        guard !colors.isEmpty else { return .green }
+        func offset(at x: CGFloat) -> CGFloat {
+            let progress = rect.width > 0 ? x / rect.width : 0
+            return sin(progress * frequency + phase) * amplitude
+        }
 
-        let scaledIndex = normalizedPosition * Double(colors.count - 1)
-        let index = min(colors.count - 1, max(0, Int(scaledIndex.rounded())))
-        return colors[index]
+        path.move(to: CGPoint(x: rect.minX, y: centerY - thickness / 2 + offset(at: rect.minX)))
+
+        for index in 1...sampleCount {
+            let x = rect.minX + rect.width * CGFloat(index) / CGFloat(sampleCount)
+            path.addLine(to: CGPoint(x: x, y: centerY - thickness / 2 + offset(at: x)))
+        }
+
+        for index in stride(from: sampleCount, through: 0, by: -1) {
+            let x = rect.minX + rect.width * CGFloat(index) / CGFloat(sampleCount)
+            path.addLine(to: CGPoint(x: x, y: centerY + thickness / 2 + offset(at: x)))
+        }
+
+        path.closeSubpath()
+        return path
     }
 }
 
