@@ -11,7 +11,7 @@ Input focus locking MVP and first UX hardening pass shipped on 2026-05-11. The h
 Follow-up items:
 - Smoke-test `⌃⌥⌘L` plus the local/global monitor fallback in Codex and other target apps.
 - Verify the locked-window outline tracks window moves/resizes and behaves correctly on multiple displays.
-- Verify the continuous bottom-line indicator stays still outside speech and has the right amount of motion while speaking.
+- Verify the continuous bottom-line indicator stays still on room noise and responds proportionally to real speech amplitude.
 - Re-test `Press Enter After Speech` in Codex after the new pre-Return settle delay.
 - Consider click-to-lock only if hotkey + recent-input menu locking still feel unreliable.
 

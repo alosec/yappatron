@@ -38,4 +38,4 @@ Implemented the first Mac input focus locking pass for Yappatron.
 
 ## Indicator Correction
 
-The segmented fake waveform looked wrong and implied real voice responsiveness that was not actually wired. Replaced it with a single continuous rainbow bar. The bar now stays flat outside speech and only subtly pulses/wiggles while Yappatron is in speaking state. True audio-reactive visualization remains a separate future feature that would need a real audio-level signal from the capture pipeline.
+The segmented fake waveform looked wrong and implied real voice responsiveness that was not actually wired. Replaced it with a single continuous rainbow bar and then wired it to a smoothed RMS audio level computed from captured PCM buffers. Silence/noise-gated input stays flat; higher measured amplitude increases thickness, glow, and wiggle. The next tuning question is calibration, not architecture.

@@ -64,6 +64,7 @@ class OverlayWindowController: NSWindowController {
 class OverlayViewModel: ObservableObject {
     @Published var isListening = false
     @Published var isSpeaking = false
+    @Published var audioLevel = 0.0
     @Published var status: StatusType = .idle
     @Published var orbStyle: OrbStyle = .voronoi
 
@@ -96,7 +97,7 @@ struct OverlayView: View {
                 ConcentricRingsOrbView(colors: orbColors, speed: orbSpeed)
                     .frame(width: 80, height: 80)
             case .bottomLine:
-                BottomLineIndicatorView(colors: orbColors, speed: orbSpeed, isSpeaking: viewModel.isSpeaking)
+                BottomLineIndicatorView(colors: orbColors, speed: orbSpeed, audioLevel: viewModel.audioLevel)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -104,6 +105,7 @@ struct OverlayView: View {
         .animation(.easeInOut(duration: 0.3), value: viewModel.isSpeaking)
         .animation(.easeInOut(duration: 0.3), value: viewModel.status)
         .animation(.easeInOut(duration: 0.2), value: viewModel.orbStyle)
+        .animation(.easeOut(duration: 0.08), value: viewModel.audioLevel)
     }
 
     // Orb colors based on state
@@ -174,29 +176,31 @@ struct OverlayView: View {
 struct BottomLineIndicatorView: View {
     let colors: [Color]
     let speed: Double
-    let isSpeaking: Bool
+    let audioLevel: Double
 
     var body: some View {
         TimelineView(.animation) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
 
             GeometryReader { geometry in
-                let pulse = isSpeaking ? (sin(time * speed * 4.0) + 1) / 2 : 0
-                let phase = isSpeaking ? CGFloat(time * speed * 2.8) : 0
-                let thickness: CGFloat = isSpeaking ? 7.0 + CGFloat(pulse) * 1.6 : 6.0
-                let amplitude: CGFloat = isSpeaking ? 1.2 : 0
+                let level = min(1.0, max(0.0, audioLevel))
+                let isActive = level > 0.01
+                let pulse = isActive ? (sin(time * speed * (2.4 + level * 4.6)) + 1) / 2 : 0
+                let phase = isActive ? CGFloat(time * speed * (1.4 + level * 4.2)) : 0
+                let thickness: CGFloat = 6.0 + CGFloat(level) * 4.0 + CGFloat(pulse) * CGFloat(level) * 1.3
+                let amplitude: CGFloat = CGFloat(level) * 3.2
 
                 WigglyBottomBarShape(phase: phase, amplitude: amplitude, thickness: thickness)
                     .fill(
                         LinearGradient(
-                            colors: colors.map { $0.opacity(isSpeaking ? 0.92 : 0.72) },
+                            colors: colors.map { $0.opacity(0.72 + level * 0.24) },
                             startPoint: .leading,
                             endPoint: .trailing
                         )
                     )
                     .frame(width: geometry.size.width, height: geometry.size.height)
-                    .shadow(color: colors.first?.opacity(isSpeaking ? 0.82 : 0.5) ?? .green.opacity(0.6), radius: isSpeaking ? 9 : 6, x: 0, y: 0)
-                    .offset(y: isSpeaking ? CGFloat(sin(time * speed * 1.4)) * 0.7 : 0)
+                    .shadow(color: colors.first?.opacity(0.5 + level * 0.36) ?? .green.opacity(0.6), radius: 6 + CGFloat(level) * 5, x: 0, y: 0)
+                    .offset(y: isActive ? CGFloat(sin(time * speed * (1.1 + level * 1.6))) * CGFloat(level) * 1.2 : 0)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 2)

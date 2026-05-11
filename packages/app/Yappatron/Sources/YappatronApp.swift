@@ -343,6 +343,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 }
             }
         }
+
+        engine.onAudioLevel = { [weak self] level in
+            self?.overlayWindow?.overlayViewModel.audioLevel = level
+        }
     }
 
     func observeEngineStatus() {

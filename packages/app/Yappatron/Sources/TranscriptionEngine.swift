@@ -200,6 +200,7 @@ class TranscriptionEngine: ObservableObject {
     var onLockedTextAdvanced: ((Int) -> Void)?         // Locked text length advanced (cloud backends)
     var onSpeechStart: (() -> Void)?
     var onSpeechEnd: (() -> Void)?
+    var onAudioLevel: ((Double) -> Void)?
     var onUtteranceComplete: (([Float], String) -> Void)?  // Audio samples + streamed text for refinement
 
     // STT provider (local or cloud)
@@ -245,6 +246,8 @@ class TranscriptionEngine: ObservableObject {
     // Audio chunk buffer for batch re-processing (will be initialized after audio format is known)
     private var audioChunkBuffer: AudioChunkBuffer?
     private var isFinishingUtterance = false
+    private var smoothedAudioLevel = 0.0
+    private var lastAudioLevelPublishAt = Date.distantPast
 
     init(backend: STTBackend = .current) {
         self.backend = backend
@@ -501,6 +504,7 @@ class TranscriptionEngine: ObservableObject {
 
                 log("isSpeaking: true → false (speech ended)")
                 self?.isSpeaking = false
+                self?.resetAudioLevel()
                 self?.onSpeechEnd?()
             }
 
@@ -535,6 +539,7 @@ class TranscriptionEngine: ObservableObject {
         audioCaptureSource = nil
         status = .ready
         didAnchorStreamBuffer = false
+        resetAudioLevel()
         Task { await streamAudioBuffer.reset() }
         log("Listening stopped")
     }
@@ -559,6 +564,7 @@ class TranscriptionEngine: ObservableObject {
                 DispatchQueue.main.async { [weak self] in
                     log("isSpeaking: true → false (speech ended)")
                     self?.isSpeaking = false
+                    self?.resetAudioLevel()
                     self?.onSpeechEnd?()
                 }
             }
@@ -618,8 +624,60 @@ class TranscriptionEngine: ObservableObject {
         if audioChunkCount % 50 == 0 {
             log("Audio chunk #\(audioChunkCount), frames: \(buffer.frameLength)")
         }
+        updateAudioLevel(from: buffer)
         Task {
             await audioBufferQueue.enqueue(buffer)
+        }
+    }
+
+    private func updateAudioLevel(from buffer: AVAudioPCMBuffer) {
+        let targetLevel = status == .listening ? measuredAudioLevel(from: buffer) : 0
+        let coefficient = targetLevel > smoothedAudioLevel ? 0.45 : 0.18
+        smoothedAudioLevel += (targetLevel - smoothedAudioLevel) * coefficient
+
+        if targetLevel == 0, smoothedAudioLevel < 0.015 {
+            smoothedAudioLevel = 0
+        }
+
+        let now = Date()
+        guard now.timeIntervalSince(lastAudioLevelPublishAt) >= 0.033 || smoothedAudioLevel == 0 else {
+            return
+        }
+
+        lastAudioLevelPublishAt = now
+        let level = smoothedAudioLevel
+        DispatchQueue.main.async { [weak self] in
+            self?.onAudioLevel?(level)
+        }
+    }
+
+    private func measuredAudioLevel(from buffer: AVAudioPCMBuffer) -> Double {
+        guard let channelData = buffer.floatChannelData else { return 0 }
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0 else { return 0 }
+
+        var rms: Float = 0
+        vDSP_rmsqv(channelData[0], 1, &rms, vDSP_Length(frameLength))
+        guard rms.isFinite, rms > 0 else { return 0 }
+
+        let decibels = 20.0 * log10(Double(rms))
+        let noiseFloor = -50.0
+        let loudSpeech = -18.0
+        let normalized = (decibels - noiseFloor) / (loudSpeech - noiseFloor)
+        let clamped = min(1.0, max(0.0, normalized))
+
+        if clamped < 0.06 {
+            return 0
+        }
+
+        return pow(clamped, 1.25)
+    }
+
+    private func resetAudioLevel() {
+        smoothedAudioLevel = 0
+        lastAudioLevelPublishAt = Date.distantPast
+        DispatchQueue.main.async { [weak self] in
+            self?.onAudioLevel?(0)
         }
     }
 
