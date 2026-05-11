@@ -41,5 +41,3 @@ Implemented the first Mac input focus locking pass for Yappatron.
 The segmented fake waveform looked wrong and implied real voice responsiveness that was not actually wired. Replaced it with a single continuous rainbow bar and then wired it to a smoothed RMS audio level computed from captured PCM buffers. Silence/noise-gated input stays flat; higher measured amplitude increases thickness, glow, and wiggle. The next tuning question is calibration, not architecture.
 
 Live validation: user tested the RMS-reactive version immediately after install and called it the intended feel. Keep this design direction: louder speech increases thickness, glow, and wiggle; silence stays still.
-
-Follow-up tuning: rest state should be a calm blue listening baseline, not green. Added an "Always Show Bottom Bar" menu option (default on) so the bottom-line style can remain visible as the persistent listening presence. RMS mapping was made slightly more sensitive and visually smoother; avoid returning to constant fake motion.

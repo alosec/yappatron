@@ -632,10 +632,10 @@ class TranscriptionEngine: ObservableObject {
 
     private func updateAudioLevel(from buffer: AVAudioPCMBuffer) {
         let targetLevel = status == .listening ? measuredAudioLevel(from: buffer) : 0
-        let coefficient = targetLevel > smoothedAudioLevel ? 0.34 : 0.11
+        let coefficient = targetLevel > smoothedAudioLevel ? 0.45 : 0.18
         smoothedAudioLevel += (targetLevel - smoothedAudioLevel) * coefficient
 
-        if targetLevel == 0, smoothedAudioLevel < 0.012 {
+        if targetLevel == 0, smoothedAudioLevel < 0.015 {
             smoothedAudioLevel = 0
         }
 
@@ -661,16 +661,16 @@ class TranscriptionEngine: ObservableObject {
         guard rms.isFinite, rms > 0 else { return 0 }
 
         let decibels = 20.0 * log10(Double(rms))
-        let noiseFloor = -58.0
-        let loudSpeech = -24.0
+        let noiseFloor = -50.0
+        let loudSpeech = -18.0
         let normalized = (decibels - noiseFloor) / (loudSpeech - noiseFloor)
         let clamped = min(1.0, max(0.0, normalized))
 
-        if clamped < 0.04 {
+        if clamped < 0.06 {
             return 0
         }
 
-        return pow(clamped, 1.08)
+        return pow(clamped, 1.25)
     }
 
     private func resetAudioLevel() {

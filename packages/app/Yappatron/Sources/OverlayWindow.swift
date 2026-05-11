@@ -97,7 +97,7 @@ struct OverlayView: View {
                 ConcentricRingsOrbView(colors: orbColors, speed: orbSpeed)
                     .frame(width: 80, height: 80)
             case .bottomLine:
-                BottomLineIndicatorView(colors: bottomLineColors, speed: orbSpeed, audioLevel: viewModel.audioLevel)
+                BottomLineIndicatorView(colors: orbColors, speed: orbSpeed, audioLevel: viewModel.audioLevel)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -105,7 +105,7 @@ struct OverlayView: View {
         .animation(.easeInOut(duration: 0.3), value: viewModel.isSpeaking)
         .animation(.easeInOut(duration: 0.3), value: viewModel.status)
         .animation(.easeInOut(duration: 0.2), value: viewModel.orbStyle)
-        .animation(.easeOut(duration: 0.16), value: viewModel.audioLevel)
+        .animation(.easeOut(duration: 0.08), value: viewModel.audioLevel)
     }
 
     // Orb colors based on state
@@ -161,26 +161,6 @@ struct OverlayView: View {
         }
     }
 
-    private var bottomLineColors: [Color] {
-        let level = min(1.0, max(0.0, viewModel.audioLevel))
-
-        if level < 0.04 {
-            return [
-                Color(red: 0.05, green: 0.42, blue: 1.0),
-                Color(red: 0.0, green: 0.74, blue: 1.0),
-                Color(red: 0.18, green: 0.52, blue: 1.0)
-            ]
-        }
-
-        return [
-            Color(red: 0.05, green: 0.45, blue: 1.0),
-            Color(red: 0.0, green: 0.95, blue: 0.8),
-            Color(red: 1.0, green: 0.12, blue: 0.42),
-            Color(red: 0.42, green: 0.18, blue: 1.0),
-            Color(red: 0.0, green: 0.68, blue: 1.0)
-        ]
-    }
-
     private var orbOpacity: Double {
         switch viewModel.status {
         case .speaking: return 1.0
@@ -205,11 +185,10 @@ struct BottomLineIndicatorView: View {
             GeometryReader { geometry in
                 let level = min(1.0, max(0.0, audioLevel))
                 let isActive = level > 0.01
-                let visualLevel = pow(level, 0.72)
-                let pulse = isActive ? (sin(time * speed * (1.9 + visualLevel * 2.6)) + 1) / 2 : 0
-                let phase = isActive ? CGFloat(time * speed * (0.95 + visualLevel * 2.4)) : 0
-                let thickness: CGFloat = 6.0 + CGFloat(visualLevel) * 3.6 + CGFloat(pulse) * CGFloat(visualLevel) * 1.0
-                let amplitude: CGFloat = CGFloat(visualLevel) * 2.25
+                let pulse = isActive ? (sin(time * speed * (2.4 + level * 4.6)) + 1) / 2 : 0
+                let phase = isActive ? CGFloat(time * speed * (1.4 + level * 4.2)) : 0
+                let thickness: CGFloat = 6.0 + CGFloat(level) * 4.0 + CGFloat(pulse) * CGFloat(level) * 1.3
+                let amplitude: CGFloat = CGFloat(level) * 3.2
 
                 WigglyBottomBarShape(phase: phase, amplitude: amplitude, thickness: thickness)
                     .fill(
@@ -220,8 +199,8 @@ struct BottomLineIndicatorView: View {
                         )
                     )
                     .frame(width: geometry.size.width, height: geometry.size.height)
-                    .shadow(color: colors.first?.opacity(0.52 + visualLevel * 0.32) ?? .blue.opacity(0.6), radius: 6 + CGFloat(visualLevel) * 5, x: 0, y: 0)
-                    .offset(y: isActive ? CGFloat(sin(time * speed * (0.8 + visualLevel * 1.1))) * CGFloat(visualLevel) * 0.8 : 0)
+                    .shadow(color: colors.first?.opacity(0.5 + level * 0.36) ?? .green.opacity(0.6), radius: 6 + CGFloat(level) * 5, x: 0, y: 0)
+                    .offset(y: isActive ? CGFloat(sin(time * speed * (1.1 + level * 1.6))) * CGFloat(level) * 1.2 : 0)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 2)
@@ -238,7 +217,7 @@ struct WigglyBottomBarShape: Shape {
         var path = Path()
         let sampleCount = 56
         let centerY = rect.midY
-        let frequency: CGFloat = 2.0 * .pi * 1.35
+        let frequency: CGFloat = 2.0 * .pi * 2.2
 
         func offset(at x: CGFloat) -> CGFloat {
             let progress = rect.width > 0 ? x / rect.width : 0

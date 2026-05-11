@@ -18,13 +18,12 @@ Shipped behavior:
 - Adds a visible outline around the locked window and keeps it tracking window moves/resizes.
 - Tracks the most recent text input so the menu item can lock the intended destination even after the menu opens.
 - Changes the lock shortcut to `⌃⌥⌘L` and adds local/global key-monitor fallback in addition to Carbon hotkey registration.
-- Adds a continuous bottom-line indicator style for the active display. It is driven by smoothed RMS audio amplitude from captured PCM buffers: silence/noise-gated input holds a calm blue baseline, louder speech adds more thickness, glow, color, and wiggle.
-- Adds an "Always Show Bottom Bar" menu option. Default is on, so the blue bottom bar can act as the persistent listening presence when the bottom-line style is selected.
+- Adds a continuous bottom-line indicator style for the active display. It is driven by smoothed RMS audio amplitude from captured PCM buffers: silence/noise-gated input stays flat, louder speech adds more thickness and wiggle.
 - Adds a short settle delay before auto-enter to improve Codex/paste-fallback behavior.
 
 Validation follow-ups:
 - Smoke-test the locked-window outline on multiple displays and with moved/resized windows.
-- Bottom indicator live test passed: RMS-reactive motion hits the intended feel. Latest tuning made it slightly more sensitive and smoother, with blue at rest.
+- Bottom indicator live test passed: RMS-reactive motion hits the intended feel. Keep the current calibration unless future room-noise or subtle-speech tests prove otherwise.
 - Re-test `Press Enter After Speech` in Codex. A 120ms settle delay was added before Return, but this still needs live confirmation.
 
 Next iteration should prioritize any remaining reliability issues found in live use.

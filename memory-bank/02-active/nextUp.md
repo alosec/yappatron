@@ -6,12 +6,11 @@
 
 ### Validate input focus lock hardening — P0
 
-Input focus locking MVP and first UX hardening pass shipped on 2026-05-11. The hardening pass addressed the first live-test gaps: visible lock state, shortcut fallback, recent-input menu locking, always-on blue bottom-line indicator, RMS-reactive speech motion, and a Codex auto-enter timing improvement.
+Input focus locking MVP and first UX hardening pass shipped on 2026-05-11. The hardening pass addressed the first live-test gaps: visible lock state, shortcut fallback, recent-input menu locking, continuous bottom-line indicator, and a Codex auto-enter timing improvement.
 
 Follow-up items:
 - Smoke-test `⌃⌥⌘L` plus the local/global monitor fallback in Codex and other target apps.
 - Verify the locked-window outline tracks window moves/resizes and behaves correctly on multiple displays.
-- Watch bottom-bar calibration in normal rooms: current direction is blue/still at rest, smoother and slightly more sensitive on speech.
 - Re-test `Press Enter After Speech` in Codex after the new pre-Return settle delay.
 - Consider click-to-lock only if hotkey + recent-input menu locking still feel unreliable.
 
@@ -66,7 +65,7 @@ Pairs naturally with the broader "build this into the agent product" plan — on
 
 - ✓ **Input focus locking MVP shipped** (2026-05-11) — capture focused input via Accessibility, lock/unlock affordance, route partial/final/refinement typing through locked destination, pause if target disappears
 - ✓ **Input focus lock UX hardening shipped** (2026-05-11) — locked-window outline, recent-input menu locking, `⌃⌥⌘L` plus key-monitor fallback, continuous bottom-line indicator style, Codex auto-enter settle delay
-- ✓ **RMS-reactive bottom indicator validated** (2026-05-11) — live test confirmed the continuous bar now stays calm on silence and responds correctly to speech amplitude; follow-up tuning made rest blue, smoother, and more sensitive
+- ✓ **RMS-reactive bottom indicator validated** (2026-05-11) — live test confirmed the continuous bar now stays calm on silence and responds correctly to speech amplitude
 - ✓ **Hybrid diarization shipped** (2026-05-08) — Deepgram word-level segmentation + local FluidAudio embedding override, 0.45 cosine threshold, 0.3s min run, race-fix for typing waiting on override task
 - ✓ **`feature/local-segmenter` branched** (2026-05-08) — experimental local-only diarization preserved off-main; FluidAudio segmentation was coarser than Deepgram's word-level boundaries in real testing
 - ✓ **FluidAudio 0.9.1 → 0.14.4** (2026-05-08) — Swift 6.3 toolchain compatibility; updated `LocalSTTProvider.loadModels(from:)` and `BatchProcessor` decoder-state API
