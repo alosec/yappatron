@@ -104,7 +104,7 @@ final class KeyboardViewController: UIInputViewController {
 
         spaceButton.configuration = .plain()
         spaceButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4)
-        spaceButton.configuration?.title = "space"
+        spaceButton.configuration?.title = "_"
         spaceButton.titleLabel?.adjustsFontSizeToFitWidth = true
         spaceButton.titleLabel?.minimumScaleFactor = 0.75
         spaceButton.addTarget(self, action: #selector(spaceButtonTapped), for: .touchUpInside)
@@ -175,6 +175,7 @@ final class KeyboardViewController: UIInputViewController {
         let hadStreamedLiveText = !lastStreamedLiveTranscript.isEmpty
         streamLiveTranscriptIfNeeded()
         if dictationState.isRecording {
+            clearTransientStatus()
             reconcilePendingTranscriptsDuringRecording()
         } else if hadStreamedLiveText {
             consumePendingTranscriptsCoveredByLiveText()
@@ -281,7 +282,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     @objc private func micButtonTapped() {
-        showTransientStatus(hasFullAccess ? "Open Yappatron manually if needed" : "Enable Full Access, then open Yappatron")
+        showTransientStatus(hasFullAccess ? "Start Yappatron, then return" : "Enable Full Access, then open Yappatron")
         transcriptStore.saveKeyboardCommand("start")
         guard let url = URL(string: "yappatron://dictation/start") else {
             return
@@ -294,7 +295,7 @@ final class KeyboardViewController: UIInputViewController {
                 if success {
                     self?.showTransientStatus("Swipe back after Yappatron opens")
                 } else {
-                    self?.showTransientStatus("Open Yappatron manually")
+                    self?.showTransientStatus("Start Yappatron, then return")
                 }
             }
         }
@@ -532,6 +533,11 @@ final class KeyboardViewController: UIInputViewController {
         transientStatusExpiresAt = Date().addingTimeInterval(4)
         transcriptLabel.text = text
         transcriptLabel.textColor = secondaryTextColor
+    }
+
+    private func clearTransientStatus() {
+        transientStatusText = nil
+        transientStatusExpiresAt = nil
     }
 
     private func activeTransientStatusText() -> String? {

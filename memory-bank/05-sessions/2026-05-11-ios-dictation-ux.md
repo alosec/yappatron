@@ -36,3 +36,5 @@ After Full Access was enabled, manually opening Yappatron and starting listening
 Patched a bridge drop case where the keyboard could mark finalized chunks as consumed while recording just because some live text had already streamed. The keyboard now backfills missing finalized text during recording when live transcript deltas stall, while still avoiding duplicate insertion when the live stream already covers a chunk.
 
 Compacted the keyboard toward a Spokenly-style control strip: one short row for start/history/check/undo/space/return/delete, a one-line status/transcript label, no custom globe key, and a shorter keyboard height target.
+
+Live test clarified the iOS boundary: the companion app can keep listening in the foreground, but reliable insertion belongs to the keyboard extension when the user is back in the target app/input. Patched stale keyboard launch status so an observed recording state immediately wins over any prior "open Yappatron" message, and changed the compact space key label from `space` to `_`.
