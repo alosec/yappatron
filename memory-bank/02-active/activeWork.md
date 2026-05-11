@@ -1,33 +1,32 @@
 # Active Work
 
-**Last Updated:** 2026-05-09
+**Last Updated:** 2026-05-11
 
 ## Current Focus
 
-**Spike paused. Recording the call instead.** The iOS webhook
-streaming pipeline (server + DNS + Caddy + iOS scaffolding) is
-shipped and infrastructure-ready, but the iPhone-side build/install
-loop on Friday night didn't converge into something usable in time
-for tomorrow's 11am Callie call. Right call: stop, sleep, just
-record the call with normal tools, post-process audio later.
+**RECENTLY SHIPPED: Input focus locking MVP**
 
-The infrastructure stays live (relay killed for the night, but DNS,
-Caddy entry, cert, and code all remain). Next session can pick this
-up with a clear head.
+Yappatron now has an input focus locking MVP for multi-speaker / meeting-mode use. The user can designate the currently focused text input as the typing destination, and dictation writes are routed back to that destination even if the foreground app changes.
 
-**Earlier P0: Input focus locking**
+Shipped behavior:
+- Captures the focused text input/window through Accessibility.
+- Adds an input-focus-lock toggle shortcut and menu item.
+- Routes streaming partials, finals, and dual-pass refinement edits through the locked destination.
+- Briefly refocuses the locked destination for typing, then restores the previously frontmost app.
+- If the locked target disappears, clears the lock and pauses instead of typing into the wrong app.
+- Prevents the floating orb overlay from becoming the key window when shown.
 
-Yappatron currently types into whatever app/field has focus at the moment a final lands. For multi-speaker / meeting-mode use, the user often wants the transcript to flow into a *specific* destination (e.g., a Claude Code chat) regardless of where the cursor moves during the conversation. Right now, alt-tabbing or clicking another window mid-conversation splits the transcript across destinations.
+Live-test follow-ups from 2026-05-11:
+- Lock shortcut did not appear to work in the user's live test. Investigate shortcut conflict/registration and add better feedback when lock succeeds or fails.
+- Add a visual indicator around the locked window whenever Yappatron is locked to it.
+- Codex auto-enter bug: "Press Enter After Speech" does not seem to work reliably in Codex. Keep an eye on whether this is Codex-specific event handling, paste fallback timing, or focus-lock interaction.
+- Add an indicator style option where the active display gets a line at the bottom of the screen instead of the psychedelic floating orb.
 
-Goal: a "lock onto this input" mode where the user designates a target text field (or window), and Yappatron continues typing there even if focus moves elsewhere.
+Next iteration should prioritize visible lock state and easier manual locking over more routing sophistication.
 
-Open design questions (no decisions yet):
-- How does the user designate the target? Click-to-pick, hotkey-while-focused, menu listing recent inputs?
-- Do we re-acquire focus before typing each chunk (briefly steals focus, types, returns), or do we type using accessibility APIs that don't require focus?
-- What happens if the locked target disappears (window closed, app quit)? Pause? Fall back to dictation? Notify the user?
-- Should the lock survive across utterances only, or across an entire session?
+**Prior iOS spike state:** The iOS webhook streaming pipeline (server + DNS + Caddy + iOS scaffolding) is shipped and infrastructure-ready, but the iPhone-side build/install loop on Friday night did not converge into something usable in time for the Callie call. Right call was to stop, sleep, record the call with normal tools, and post-process audio later.
 
-Initial sketch: enumerate distinct text inputs we've typed into (by app + window + field role) and present them in a menu as "lock to this input" options. Simplest possible MVP — we don't need click-to-pick for the first cut.
+The infrastructure stays live (relay killed for the night, but DNS, Caddy entry, cert, and code all remain). A later session can pick this up with a clear head.
 
 ## Current State
 

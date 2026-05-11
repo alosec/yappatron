@@ -5,6 +5,9 @@ import AppKit
 class OverlayWindow: NSWindow {
     
     let overlayViewModel = OverlayViewModel()
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
     
     init() {
         super.init(

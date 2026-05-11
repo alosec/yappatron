@@ -7,6 +7,8 @@ class InputSimulator {
 
     private struct FocusedElementContext {
         let lookupResult: AXError
+        let element: AXUIElement?
+        let window: AXUIElement?
         let role: String?
         let subrole: String?
 
@@ -45,6 +47,108 @@ class InputSimulator {
             if !pasteboardItems.isEmpty {
                 pasteboard.writeObjects(pasteboardItems)
             }
+        }
+    }
+
+    final class InputFocusTarget {
+        struct RestoreToken {
+            private let previousApp: NSRunningApplication?
+            private let lockedPID: pid_t
+
+            init(previousApp: NSRunningApplication?, lockedPID: pid_t) {
+                self.previousApp = previousApp
+                self.lockedPID = lockedPID
+            }
+
+            func restore() {
+                guard let previousApp,
+                      !previousApp.isTerminated,
+                      previousApp.processIdentifier != lockedPID else {
+                    return
+                }
+
+                previousApp.activate(options: [])
+            }
+        }
+
+        let element: AXUIElement
+        let window: AXUIElement?
+        let pid: pid_t
+        let bundleID: String?
+        let appName: String
+        let windowTitle: String?
+        let role: String?
+        let subrole: String?
+
+        var displayName: String {
+            if let windowTitle, !windowTitle.isEmpty {
+                return "\(appName) — \(windowTitle)"
+            }
+
+            return appName
+        }
+
+        init(
+            element: AXUIElement,
+            window: AXUIElement?,
+            pid: pid_t,
+            bundleID: String?,
+            appName: String,
+            windowTitle: String?,
+            role: String?,
+            subrole: String?
+        ) {
+            self.element = element
+            self.window = window
+            self.pid = pid
+            self.bundleID = bundleID
+            self.appName = appName
+            self.windowTitle = windowTitle
+            self.role = role
+            self.subrole = subrole
+        }
+
+        func focusForTyping() -> RestoreToken? {
+            guard let app = runningApplication(), elementIsStillValid() else {
+                return nil
+            }
+
+            let previousApp = NSWorkspace.shared.frontmostApplication
+            app.activate(options: [])
+
+            if let window {
+                AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+                AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+            }
+
+            let appElement = AXUIElementCreateApplication(pid)
+            AXUIElementSetAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, element)
+            let focusResult = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+
+            Thread.sleep(forTimeInterval: 0.04)
+
+            guard focusResult == .success || NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                return nil
+            }
+
+            return RestoreToken(previousApp: previousApp, lockedPID: pid)
+        }
+
+        private func runningApplication() -> NSRunningApplication? {
+            guard let app = NSRunningApplication(processIdentifier: pid) else {
+                return nil
+            }
+
+            if let bundleID, app.bundleIdentifier != bundleID {
+                return nil
+            }
+
+            return app
+        }
+
+        private func elementIsStillValid() -> Bool {
+            var value: AnyObject?
+            return AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &value) == .success
         }
     }
     
@@ -213,6 +317,28 @@ class InputSimulator {
         return NSWorkspace.shared.frontmostApplication?.localizedName
     }
 
+    static func captureFocusedTextInputTarget() -> InputFocusTarget? {
+        let context = focusedElementContext()
+        guard let element = context.element,
+              context.isStandardTextInput || frontmostAppUsesPasteFallback(),
+              let app = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+
+        let windowTitle = context.window.flatMap { stringAttribute(kAXTitleAttribute as CFString, from: $0) }
+
+        return InputFocusTarget(
+            element: element,
+            window: context.window,
+            pid: app.processIdentifier,
+            bundleID: app.bundleIdentifier,
+            appName: app.localizedName ?? "Unknown App",
+            windowTitle: windowTitle,
+            role: context.role,
+            subrole: context.subrole
+        )
+    }
+
     static func logTextInputFocusRejection() {
         let context = focusedElementContext()
         let app = NSWorkspace.shared.frontmostApplication
@@ -240,14 +366,15 @@ class InputSimulator {
         )
         
         guard result == .success, let element = focusedElement else {
-            return FocusedElementContext(lookupResult: result, role: nil, subrole: nil)
+            return FocusedElementContext(lookupResult: result, element: nil, window: nil, role: nil, subrole: nil)
         }
 
         let axElement = element as! AXUIElement
         let role = stringAttribute(kAXRoleAttribute as CFString, from: axElement)
         let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: axElement)
+        let window = elementAttribute(kAXWindowAttribute as CFString, from: axElement)
 
-        return FocusedElementContext(lookupResult: result, role: role, subrole: subrole)
+        return FocusedElementContext(lookupResult: result, element: axElement, window: window, role: role, subrole: subrole)
     }
 
     private static func stringAttribute(_ attribute: CFString, from element: AXUIElement) -> String? {
@@ -258,6 +385,20 @@ class InputSimulator {
         }
 
         return value as? String
+    }
+
+    private static func elementAttribute(_ attribute: CFString, from element: AXUIElement) -> AXUIElement? {
+        var value: AnyObject?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard result == .success, let value else {
+            return nil
+        }
+
+        guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+
+        return (value as! AXUIElement)
     }
 
     private static func frontmostAppUsesPasteFallback() -> Bool {

@@ -9,6 +9,10 @@ extension Notification.Name {
 enum HotKeyPreferences {
     private static let pushToTalkKey = "pushToTalkHotKey"
 
+    static var inputFocusLockCombo: KeyCombo {
+        KeyCombo(key: .l, modifiers: [.command, .option])
+    }
+
     static var pushToTalkCombo: KeyCombo {
         get {
             guard let dictionary = UserDefaults.standard.dictionary(forKey: pushToTalkKey),
@@ -99,7 +103,8 @@ enum HotKeyPreferences {
     private static var reservedAppShortcuts: [(name: String, combo: KeyCombo)] {
         [
             ("Toggle Pause", KeyCombo(key: .escape, modifiers: [.command])),
-            ("Toggle Indicator", KeyCombo(key: .space, modifiers: [.option]))
+            ("Toggle Indicator", KeyCombo(key: .space, modifiers: [.option])),
+            ("Toggle Input Focus Lock", inputFocusLockCombo)
         ]
     }
 

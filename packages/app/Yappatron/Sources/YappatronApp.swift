@@ -32,6 +32,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // Hotkeys
     var togglePauseHotKey: HotKey?
     var toggleOverlayHotKey: HotKey?
+    var toggleInputFocusLockHotKey: HotKey?
     var pushToTalkHotKey: HotKey?
     var pushToTalkLocalMonitor: Any?
     var pushToTalkGlobalMonitor: Any?
@@ -41,6 +42,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @Published var isPushToTalkHeld = false
     @Published var currentTypedText = "" // What we've typed so far (for backspace corrections)
     var lockedTextLength = 0             // Characters confirmed by is_final (never backspace into these)
+    var lockedInputFocusTarget: InputSimulator.InputFocusTarget?
+    var inputFocusLockAlertVisible = false
 
     // Settings
     var pressEnterAfterSpeech: Bool {
@@ -89,6 +92,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 refinementManager?.onRefinementComplete = { [weak self] refinedText in
                     self?.handleRefinementComplete(refinedText)
                 }
+
+                refinementManager?.applyRefinementTextUpdate = { [weak self] streamedText, refinedText in
+                    self?.applyTextUpdateToTypingDestination(from: streamedText, to: refinedText, logRejection: true) ?? false
+                }
             }
         }
 
@@ -129,6 +136,84 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         Task { @MainActor in
             engine.cleanup()
         }
+    }
+
+    // MARK: - Typing Destination
+
+    private struct TypingDestination {
+        let restoreToken: InputSimulator.InputFocusTarget.RestoreToken?
+    }
+
+    @discardableResult
+    func withTypingDestination(logRejection: Bool = false, _ work: () -> Void) -> Bool {
+        guard let destination = prepareTypingDestination(logRejection: logRejection) else {
+            return false
+        }
+
+        defer {
+            destination.restoreToken?.restore()
+        }
+
+        work()
+        return true
+    }
+
+    func applyTextUpdateToTypingDestination(from oldText: String, to newText: String, logRejection: Bool) -> Bool {
+        withTypingDestination(logRejection: logRejection) {
+            inputSimulator.applyTextUpdate(from: oldText, to: newText)
+        }
+    }
+
+    private func prepareTypingDestination(logRejection: Bool) -> TypingDestination? {
+        if let lockedInputFocusTarget {
+            guard let restoreToken = lockedInputFocusTarget.focusForTyping() else {
+                handleInputFocusLockLost()
+                return nil
+            }
+
+            return TypingDestination(restoreToken: restoreToken)
+        }
+
+        guard InputSimulator.isTextInputFocused() else {
+            if logRejection {
+                InputSimulator.logTextInputFocusRejection()
+            }
+            return nil
+        }
+
+        return TypingDestination(restoreToken: nil)
+    }
+
+    private func handleInputFocusLockLost() {
+        guard let target = lockedInputFocusTarget else { return }
+
+        lockedInputFocusTarget = nil
+        currentTypedText = ""
+        lockedTextLength = 0
+        isPaused = true
+        isPushToTalkHeld = false
+        engine.stopCapture()
+        updateOverlayStatus()
+        updateStatusIcon()
+
+        NSLog("[Yappatron] Input focus lock lost for \(target.displayName); dictation paused")
+        showInputFocusLockAlert(
+            title: "Input Lock Lost",
+            message: "\(target.displayName) is no longer available. Yappatron paused dictation instead of typing into another app."
+        )
+    }
+
+    private func showInputFocusLockAlert(title: String, message: String) {
+        guard !inputFocusLockAlertVisible else { return }
+
+        inputFocusLockAlertVisible = true
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        inputFocusLockAlertVisible = false
     }
 
     // MARK: - Engine Setup
@@ -213,14 +298,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func handlePartialTranscription(_ partial: String) {
         guard !isPaused else { return }
 
-        guard InputSimulator.isTextInputFocused() else {
-            return
-        }
-
         if STTBackend.current.returnsPunctuatedText {
             // Cloud backend: only type is_final segments (lockedTextLength matches).
             // Interims flow through for orb/speech detection but aren't typed.
-            if partial.count <= lockedTextLength && partial.count > currentTypedText.count {
+            guard partial.count <= lockedTextLength && partial.count > currentTypedText.count else {
+                return
+            }
+
+            withTypingDestination {
                 let newChars = String(partial.dropFirst(currentTypedText.count))
                 if !newChars.isEmpty {
                     inputSimulator.typeString(newChars)
@@ -230,9 +315,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        // Local backend: original behavior
-        inputSimulator.applyTextUpdate(from: currentTypedText, to: partial)
-        currentTypedText = partial
+        withTypingDestination {
+            // Local backend: original behavior
+            inputSimulator.applyTextUpdate(from: currentTypedText, to: partial)
+            currentTypedText = partial
+        }
     }
 
     /// Handle final transcription (EOU detected)
@@ -240,27 +327,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func handleFinalTranscription(_ text: String) {
         guard !isPaused else { return }
 
-        // Check if input is focused
-        guard InputSimulator.isTextInputFocused() else {
-            InputSimulator.logTextInputFocusRejection()
-            return
+        withTypingDestination(logRejection: true) {
+            // Correct any interim drift — finals are authoritative
+            if currentTypedText != text {
+                inputSimulator.applyTextUpdate(from: currentTypedText, to: text)
+                currentTypedText = text
+            }
+
+            // Reset locked boundary
+            lockedTextLength = 0
+
+            // Cloud backends return punctuated text — no dual-pass needed
+            // If dual-pass refinement is DISABLED, add spacing/enter immediately
+            // If ENABLED (local only), wait for refinement to complete
+            let needsRefinement = enableDualPassRefinement && !STTBackend.current.returnsPunctuatedText
+            if !needsRefinement {
+                // Add trailing space
+                inputSimulator.typeString(" ")
+
+                // Press enter if enabled
+                if pressEnterAfterSpeech {
+                    inputSimulator.pressEnter()
+                }
+
+                // Reset for next utterance
+                currentTypedText = ""
+            }
+            // If dual-pass enabled, spacing/enter will be added in handleRefinementComplete()
         }
+    }
 
-        // Correct any interim drift — finals are authoritative
-        if currentTypedText != text {
-            inputSimulator.applyTextUpdate(from: currentTypedText, to: text)
-            currentTypedText = text
-        }
+    /// Called after batch refinement completes (dual-pass mode only)
+    func handleRefinementComplete(_ refinedText: String) {
+        withTypingDestination(logRejection: true) {
+            // Update tracking to reflect refined text
+            currentTypedText = refinedText
 
-        // Reset locked boundary
-        lockedTextLength = 0
-
-        // Cloud backends return punctuated text — no dual-pass needed
-        // If dual-pass refinement is DISABLED, add spacing/enter immediately
-        // If ENABLED (local only), wait for refinement to complete
-        let needsRefinement = enableDualPassRefinement && !STTBackend.current.returnsPunctuatedText
-        if !needsRefinement {
-            // Add trailing space
+            // Add trailing space for next utterance
             inputSimulator.typeString(" ")
 
             // Press enter if enabled
@@ -271,24 +374,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             // Reset for next utterance
             currentTypedText = ""
         }
-        // If dual-pass enabled, spacing/enter will be added in handleRefinementComplete()
-    }
-
-    /// Called after batch refinement completes (dual-pass mode only)
-    func handleRefinementComplete(_ refinedText: String) {
-        // Update tracking to reflect refined text
-        currentTypedText = refinedText
-
-        // Add trailing space for next utterance
-        inputSimulator.typeString(" ")
-
-        // Press enter if enabled
-        if pressEnterAfterSpeech {
-            inputSimulator.pressEnter()
-        }
-
-        // Reset for next utterance
-        currentTypedText = ""
     }
 
     func updateOverlayStatus() {
@@ -387,6 +472,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         modeItem.submenu = modeMenu
         menu.addItem(modeItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        addInputFocusLockMenuItems(to: menu)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -518,6 +607,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         self.statusItem.menu = nil
     }
 
+    func addInputFocusLockMenuItems(to menu: NSMenu) {
+        let shortcut = HotKeyPreferences.displayString(for: HotKeyPreferences.inputFocusLockCombo)
+
+        if let lockedInputFocusTarget {
+            let statusItem = NSMenuItem(title: "Input Locked: \(lockedInputFocusTarget.displayName)", action: nil, keyEquivalent: "")
+            statusItem.isEnabled = false
+            menu.addItem(statusItem)
+            menu.addItem(NSMenuItem(title: "Unlock Input Focus (\(shortcut))", action: #selector(toggleInputFocusLockAction), keyEquivalent: ""))
+        } else {
+            menu.addItem(NSMenuItem(title: "Lock Input Focus to Current Field (\(shortcut))", action: #selector(toggleInputFocusLockAction), keyEquivalent: ""))
+        }
+    }
+
     func updateStatusIcon() {
         guard let button = statusItem?.button else { return }
 
@@ -542,6 +644,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         var image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Yappatron")
         image = image?.withSymbolConfiguration(config)
         button.image = image
+        if let lockedInputFocusTarget {
+            button.toolTip = "Yappatron - input locked to \(lockedInputFocusTarget.displayName)"
+        } else {
+            button.toolTip = "Yappatron"
+        }
     }
 
     // MARK: - Overlay
@@ -560,7 +667,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func showOverlay() {
-        overlayWindow?.makeKeyAndOrderFront(nil)
+        overlayWindow?.orderFrontRegardless()
         overlayWindow?.positionAtBottom()
     }
 
@@ -582,6 +689,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         toggleOverlayHotKey?.keyDownHandler = { [weak self] in
             Task { @MainActor in
                 self?.toggleOverlay()
+            }
+        }
+
+        toggleInputFocusLockHotKey = HotKey(keyCombo: HotKeyPreferences.inputFocusLockCombo)
+        toggleInputFocusLockHotKey?.keyDownHandler = { [weak self] in
+            Task { @MainActor in
+                self?.toggleInputFocusLockAction()
             }
         }
 
@@ -721,6 +835,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     @objc func toggleEnterAction() {
         pressEnterAfterSpeech.toggle()
+    }
+
+    @objc func toggleInputFocusLockAction() {
+        if lockedInputFocusTarget != nil {
+            unlockInputFocus()
+        } else {
+            lockCurrentFocusedInput()
+        }
+    }
+
+    func lockCurrentFocusedInput() {
+        guard let target = InputSimulator.captureFocusedTextInputTarget() else {
+            showInputFocusLockAlert(
+                title: "No Text Input Focused",
+                message: "Click into the text field Yappatron should type into, then press \(HotKeyPreferences.displayString(for: HotKeyPreferences.inputFocusLockCombo))."
+            )
+            return
+        }
+
+        lockedInputFocusTarget = target
+        updateStatusIcon()
+        showOverlay()
+        NSLog("[Yappatron] Input focus locked to \(target.displayName)")
+    }
+
+    func unlockInputFocus() {
+        guard let target = lockedInputFocusTarget else { return }
+
+        lockedInputFocusTarget = nil
+        updateStatusIcon()
+        updateOverlayStatus()
+        NSLog("[Yappatron] Input focus unlocked from \(target.displayName)")
     }
 
     @objc func toggleSystemAudioCapture() {
@@ -985,6 +1131,7 @@ struct SettingsView: View {
             Section("Shortcuts") {
                 LabeledContent("Toggle Pause", value: "⌘ Escape")
                 LabeledContent("Toggle Indicator", value: "⌥ Space")
+                LabeledContent("Input Focus Lock", value: HotKeyPreferences.displayString(for: HotKeyPreferences.inputFocusLockCombo))
                 LabeledContent("Push to Talk", value: pushToTalkShortcut)
                 Button("Configure Push-to-Talk Shortcut...") {
                     let currentCombo = HotKeyPreferences.pushToTalkCombo
@@ -1009,6 +1156,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 390, height: 360)
+        .frame(width: 390, height: 380)
     }
 }

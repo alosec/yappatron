@@ -13,6 +13,7 @@ class TextRefinementManager {
 
     // Callback when refinement completes
     var onRefinementComplete: ((String) -> Void)?
+    var applyRefinementTextUpdate: ((String, String) -> Bool)?
 
     init(batchProcessor: BatchProcessor, inputSimulator: InputSimulator) {
         self.batchProcessor = batchProcessor
@@ -53,8 +54,17 @@ class TextRefinementManager {
 
                 // Apply text update using diff-based replacement
                 await MainActor.run {
-                    inputSimulator.applyTextUpdate(from: streamedText, to: refinedText)
-                    onRefinementComplete?(refinedText)
+                    let didApply: Bool
+                    if let applyRefinementTextUpdate {
+                        didApply = applyRefinementTextUpdate(streamedText, refinedText)
+                    } else {
+                        inputSimulator.applyTextUpdate(from: streamedText, to: refinedText)
+                        didApply = true
+                    }
+
+                    if didApply {
+                        onRefinementComplete?(refinedText)
+                    }
                 }
 
                 isProcessing = false
