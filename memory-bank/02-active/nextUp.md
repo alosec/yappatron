@@ -57,7 +57,9 @@ Pairs naturally with the broader "build this into the agent product" plan — on
    - Deepgram endpointing test: confirm chunks now land at complete-thought boundaries, not every short final fragment
    - Type-anywhere keyboard flow: confirm queued chunks insert in order and no earlier utterances are dropped
    - Spokenly-style keyboard dictation flow: tap `Start Dictation`, launch Yappatron, start recording, swipe back, and confirm live transcript deltas stream into the active input
+   - Treat keyboard-to-app launch as best-effort until proven otherwise on device; if iOS blocks the launch, keep the honest flow as "start listening in Yappatron, then swipe back"
    - Confirm checkmark finish does not duplicate finalized chunks after live streaming has already inserted them
+   - Re-test the latest keyboard bridge patch: finalized chunks should now backfill missed live text instead of being marked consumed during recording
    - If keyboard shows `Allow Full Access for live dictation`, enable Full Access for the Yappatron keyboard and retest the named/general pasteboard bridge
    - Trust the refreshed Personal Team profile on device if direct launch is blocked after install
    - Eventually a paid Apple Developer Program path with App Group entitlement for cleaner companion-app/keyboard sharing

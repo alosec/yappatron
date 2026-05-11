@@ -63,82 +63,92 @@ final class KeyboardViewController: UIInputViewController {
 
     private func configureView() {
         view.backgroundColor = keyboardBackgroundColor
+        view.layoutMargins = UIEdgeInsets(top: 6, left: 6, bottom: 6, right: 6)
         appLaunchWebView.isHidden = true
         appLaunchWebView.isOpaque = false
         appLaunchWebView.backgroundColor = .clear
 
-        transcriptLabel.font = .preferredFont(forTextStyle: .callout)
-        transcriptLabel.numberOfLines = 3
+        transcriptLabel.font = .preferredFont(forTextStyle: .footnote)
+        transcriptLabel.numberOfLines = 1
         transcriptLabel.lineBreakMode = .byTruncatingTail
         transcriptLabel.textColor = activeTextColor
         transcriptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         micButton.configuration = .filled()
         micButton.configuration?.image = UIImage(systemName: "mic.fill")
-        micButton.configuration?.imagePadding = 8
-        micButton.configuration?.title = "Start Dictation"
+        micButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)
+        micButton.configuration?.imagePadding = 5
+        micButton.configuration?.title = "Start"
+        micButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        micButton.titleLabel?.minimumScaleFactor = 0.75
         micButton.addTarget(self, action: #selector(micButtonTapped), for: .touchUpInside)
         micButton.accessibilityLabel = "Start dictation"
 
         historyButton.configuration = .tinted()
         historyButton.configuration?.image = UIImage(systemName: "clock.arrow.circlepath")
+        historyButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 5, bottom: 6, trailing: 5)
         historyButton.addTarget(self, action: #selector(historyButtonTapped), for: .touchUpInside)
         historyButton.accessibilityLabel = "Transcript history"
 
         insertButton.configuration = .filled()
         insertButton.configuration?.image = UIImage(systemName: "checkmark")
-        insertButton.configuration?.imagePadding = 8
-        insertButton.configuration?.title = "Finish"
+        insertButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 5, bottom: 6, trailing: 5)
         insertButton.addTarget(self, action: #selector(insertButtonTapped), for: .touchUpInside)
         insertButton.accessibilityLabel = "Finish dictation"
 
         undoButton.configuration = .plain()
         undoButton.configuration?.image = UIImage(systemName: "arrow.uturn.backward")
+        undoButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4)
         undoButton.addTarget(self, action: #selector(undoButtonTapped), for: .touchUpInside)
         undoButton.accessibilityLabel = "Undo"
 
         spaceButton.configuration = .plain()
+        spaceButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4)
         spaceButton.configuration?.title = "space"
+        spaceButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        spaceButton.titleLabel?.minimumScaleFactor = 0.75
         spaceButton.addTarget(self, action: #selector(spaceButtonTapped), for: .touchUpInside)
         spaceButton.accessibilityLabel = "Space"
 
         returnButton.configuration = .plain()
         returnButton.configuration?.image = UIImage(systemName: "return")
+        returnButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4)
         returnButton.addTarget(self, action: #selector(returnButtonTapped), for: .touchUpInside)
         returnButton.accessibilityLabel = "Return"
 
         deleteButton.configuration = .plain()
         deleteButton.configuration?.image = UIImage(systemName: "delete.left")
+        deleteButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4)
         deleteButton.addTarget(self, action: #selector(deleteButtonTapped), for: .touchUpInside)
         deleteButton.accessibilityLabel = "Delete"
 
-        let primaryRow = UIStackView(arrangedSubviews: [micButton, historyButton, insertButton])
-        primaryRow.axis = .horizontal
-        primaryRow.alignment = .fill
-        primaryRow.distribution = .fill
-        primaryRow.spacing = 10
-
-        let editRow = UIStackView(arrangedSubviews: [undoButton, spaceButton, returnButton, deleteButton])
-        editRow.axis = .horizontal
-        editRow.alignment = .fill
-        editRow.distribution = .fill
-        editRow.spacing = 8
-
-        let buttonRow = UIStackView(arrangedSubviews: [primaryRow, editRow])
-        buttonRow.axis = .vertical
+        let buttonRow = UIStackView(arrangedSubviews: [
+            micButton,
+            historyButton,
+            insertButton,
+            undoButton,
+            spaceButton,
+            returnButton,
+            deleteButton
+        ])
+        buttonRow.axis = .horizontal
         buttonRow.alignment = .fill
         buttonRow.distribution = .fill
-        buttonRow.spacing = 8
+        buttonRow.spacing = 4
 
-        historyButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        undoButton.widthAnchor.constraint(equalToConstant: 42).isActive = true
-        returnButton.widthAnchor.constraint(equalToConstant: 42).isActive = true
-        deleteButton.widthAnchor.constraint(equalToConstant: 42).isActive = true
+        micButton.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        historyButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        insertButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        undoButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        spaceButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        returnButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        deleteButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        buttonRow.heightAnchor.constraint(equalToConstant: 38).isActive = true
 
         let stack = UIStackView(arrangedSubviews: [transcriptLabel, buttonRow])
         stack.axis = .vertical
         stack.alignment = .fill
-        stack.spacing = 12
+        stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(stack)
@@ -148,13 +158,13 @@ final class KeyboardViewController: UIInputViewController {
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor, constant: 8),
-            stack.bottomAnchor.constraint(equalTo: view.layoutMarginsGuide.bottomAnchor, constant: -8),
+            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.layoutMarginsGuide.bottomAnchor),
             appLaunchWebView.widthAnchor.constraint(equalToConstant: 1),
             appLaunchWebView.heightAnchor.constraint(equalToConstant: 1),
             appLaunchWebView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             appLaunchWebView.topAnchor.constraint(equalTo: view.topAnchor),
-            view.heightAnchor.constraint(greaterThanOrEqualToConstant: 216)
+            view.heightAnchor.constraint(greaterThanOrEqualToConstant: 92)
         ])
     }
 
@@ -163,13 +173,11 @@ final class KeyboardViewController: UIInputViewController {
         let lastInsertedAt = localDefaults.double(forKey: LocalKeys.lastInsertedUpdatedAt)
         pendingTranscripts = transcriptStore.keyboardTranscripts(after: lastInsertedAt)
         let hadStreamedLiveText = !lastStreamedLiveTranscript.isEmpty
-        let didStreamLiveText = streamLiveTranscriptIfNeeded()
+        streamLiveTranscriptIfNeeded()
         if dictationState.isRecording {
-            if didStreamLiveText || !lastStreamedLiveTranscript.isEmpty {
-                markPendingTranscriptsInserted()
-            }
+            reconcilePendingTranscriptsDuringRecording()
         } else if hadStreamedLiveText {
-            markPendingTranscriptsInserted()
+            consumePendingTranscriptsCoveredByLiveText()
         }
 
         let text = showingHistory
@@ -179,7 +187,7 @@ final class KeyboardViewController: UIInputViewController {
         if let statusText = activeTransientStatusText() {
             transcriptLabel.text = statusText
         } else if !hasFullAccess {
-            transcriptLabel.text = "Allow Full Access for live dictation"
+            transcriptLabel.text = "Enable Full Access for live dictation"
         } else if text.isEmpty {
             if dictationState.isRecording {
                 transcriptLabel.text = "Listening"
@@ -200,11 +208,10 @@ final class KeyboardViewController: UIInputViewController {
             transcriptLabel.text = text
         }
         transcriptLabel.textColor = text.isEmpty || !hasFullAccess ? secondaryTextColor : activeTextColor
-        micButton.configuration?.title = dictationState.isRecording ? "Recording" : "Start Dictation"
+        micButton.configuration?.title = dictationState.isRecording ? "Rec" : "Start"
         micButton.configuration?.image = UIImage(systemName: dictationState.isRecording ? "waveform" : "mic.fill")
         micButton.isEnabled = !dictationState.isRecording
         insertButton.isEnabled = dictationState.isRecording || !pendingTranscripts.isEmpty || !text.isEmpty
-        insertButton.configuration?.title = dictationState.isRecording ? "Finish" : "Insert"
         historyButton.isEnabled = hasFullAccess
     }
 
@@ -274,17 +281,17 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     @objc private func micButtonTapped() {
-        showTransientStatus(hasFullAccess ? "Opening Yappatron" : "Opening Yappatron. Enable Full Access for live streaming.")
+        showTransientStatus(hasFullAccess ? "Open Yappatron manually if needed" : "Enable Full Access, then open Yappatron")
         transcriptStore.saveKeyboardCommand("start")
         guard let url = URL(string: "yappatron://dictation/start") else {
             return
         }
 
-        let responderHandled = openURLThroughResponderChain(url)
+        _ = openURLThroughResponderChain(url)
         openURLThroughWebView(url)
         extensionContext?.open(url) { [weak self] success in
             DispatchQueue.main.async {
-                if success || responderHandled {
+                if success {
                     self?.showTransientStatus("Swipe back after Yappatron opens")
                 } else {
                     self?.showTransientStatus("Open Yappatron manually")
@@ -404,6 +411,120 @@ final class KeyboardViewController: UIInputViewController {
             localDefaults.set(newest, forKey: LocalKeys.lastInsertedUpdatedAt)
         }
         pendingTranscripts.removeAll { $0.updatedAt <= newest }
+    }
+
+    private func reconcilePendingTranscriptsDuringRecording() {
+        guard !pendingTranscripts.isEmpty else {
+            return
+        }
+
+        for transcript in pendingTranscripts {
+            let text = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                markPendingTranscriptsInserted(upTo: transcript.updatedAt)
+                continue
+            }
+
+            if liveTextCovers(text) {
+                markPendingTranscriptsInserted(upTo: transcript.updatedAt)
+                continue
+            }
+
+            let insertion = missingSuffix(from: text, after: lastStreamedLiveTranscript)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !insertion.isEmpty else {
+                markPendingTranscriptsInserted(upTo: transcript.updatedAt)
+                continue
+            }
+
+            if !lastStreamedLiveTranscript.isEmpty {
+                textDocumentProxy.insertText(" ")
+            }
+            textDocumentProxy.insertText(insertion)
+            lastStreamedLiveTranscript = mergedTranscript(lastStreamedLiveTranscript, with: text)
+            localDefaults.set(lastStreamedLiveTranscript, forKey: LocalKeys.lastStreamedLiveTranscript)
+            markPendingTranscriptsInserted(upTo: transcript.updatedAt)
+        }
+    }
+
+    private func consumePendingTranscriptsCoveredByLiveText() {
+        for transcript in pendingTranscripts where liveTextCovers(transcript.text) {
+            markPendingTranscriptsInserted(upTo: transcript.updatedAt)
+        }
+    }
+
+    private func markPendingTranscriptsInserted(upTo updatedAt: TimeInterval) {
+        let lastInsertedAt = localDefaults.double(forKey: LocalKeys.lastInsertedUpdatedAt)
+        if updatedAt > lastInsertedAt {
+            localDefaults.set(updatedAt, forKey: LocalKeys.lastInsertedUpdatedAt)
+        }
+        pendingTranscripts.removeAll { $0.updatedAt <= updatedAt }
+    }
+
+    private func liveTextCovers(_ text: String) -> Bool {
+        let streamed = normalized(lastStreamedLiveTranscript)
+        let candidate = normalized(text)
+        guard !streamed.isEmpty, !candidate.isEmpty else {
+            return false
+        }
+        return streamed.contains(candidate)
+    }
+
+    private func missingSuffix(from text: String, after base: String) -> String {
+        let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty, !base.isEmpty else {
+            return candidate
+        }
+
+        let overlap = suffixPrefixOverlap(base, candidate)
+        guard overlap > 0 else {
+            return candidate
+        }
+
+        let index = candidate.index(candidate.startIndex, offsetBy: overlap)
+        return String(candidate[index...])
+    }
+
+    private func mergedTranscript(_ base: String, with next: String) -> String {
+        let base = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = next.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !base.isEmpty else { return next }
+        guard !next.isEmpty else { return base }
+
+        let overlap = suffixPrefixOverlap(base, next)
+        if overlap > 0 {
+            let index = next.index(next.startIndex, offsetBy: overlap)
+            let suffix = next[index...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return suffix.isEmpty ? base : "\(base) \(suffix)"
+        }
+
+        return "\(base) \(next)"
+    }
+
+    private func suffixPrefixOverlap(_ lhs: String, _ rhs: String) -> Int {
+        let lhs = lhs.lowercased()
+        let rhs = rhs.lowercased()
+        let maxLength = min(lhs.count, rhs.count)
+        guard maxLength > 0 else { return 0 }
+
+        for length in stride(from: maxLength, through: 1, by: -1) {
+            let lhsStart = lhs.index(lhs.endIndex, offsetBy: -length)
+            let rhsEnd = rhs.index(rhs.startIndex, offsetBy: length)
+            if lhs[lhsStart...] == rhs[..<rhsEnd] {
+                return length
+            }
+        }
+
+        return 0
+    }
+
+    private func normalized(_ text: String) -> String {
+        text
+            .lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func showTransientStatus(_ text: String) {

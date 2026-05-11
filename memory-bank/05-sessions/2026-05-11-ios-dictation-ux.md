@@ -28,3 +28,11 @@ User clarified the target iPhone workflow by comparing against Spokenly: the Yap
 Live test found that the keyboard still showed `Start Dictation` while the app was already listening, and tapping start gave no visible feedback. Patched the keyboard to remove the redundant globe key, darken the keyboard background toward iOS dark-keyboard gray, show explicit transient launch/status text, attempt a responder-chain URL open fallback, and mirror the Yappatron bridge through a named pasteboard in addition to the general pasteboard. If the keyboard reports `Allow Full Access for live dictation`, the OS is blocking the app/keyboard bridge until full access is enabled for the custom keyboard.
 
 Screenshot from the device confirmed that exact full-access warning was visible. Added a hidden `WKWebView` URL-scheme fallback as a best-effort custom-keyboard app launcher and darkened the keyboard background another small step toward the native dark iOS keyboard strip.
+
+## Live-Test Follow-Up
+
+After Full Access was enabled, manually opening Yappatron and starting listening proved the app-to-keyboard bridge can insert into Notes, but the keyboard's `Start Dictation` action still did not reliably launch/switch to the app. Treat custom-keyboard URL launching as best-effort only for now; the UI should tell the truth and ask the user to open Yappatron manually when iOS blocks the handoff.
+
+Patched a bridge drop case where the keyboard could mark finalized chunks as consumed while recording just because some live text had already streamed. The keyboard now backfills missing finalized text during recording when live transcript deltas stall, while still avoiding duplicate insertion when the live stream already covers a chunk.
+
+Compacted the keyboard toward a Spokenly-style control strip: one short row for start/history/check/undo/space/return/delete, a one-line status/transcript label, no custom globe key, and a shorter keyboard height target.

@@ -3,12 +3,16 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = DictationViewModel()
     @State private var settingsExpanded = false
+    @AppStorage("keyboardSetupTipDismissed") private var keyboardSetupTipDismissed = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     heroSection
+                    if !keyboardSetupTipDismissed {
+                        keyboardSetupSection
+                    }
                     liveSection
                     settingsSection
                     if viewModel.usesDeepgram && !viewModel.speakerLabels.seenIDs.isEmpty {
@@ -37,6 +41,45 @@ struct ContentView: View {
                 viewModel.autoStartIfNeeded()
             }
         }
+    }
+
+    private var keyboardSetupSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("Keyboard Setup", systemImage: "keyboard")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    keyboardSetupTipDismissed = true
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.bold))
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss keyboard setup")
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Add Yappatron Keyboard in iOS Keyboard settings.", systemImage: "1.circle.fill")
+                Label("Turn on Allow Full Access for live insertion.", systemImage: "2.circle.fill")
+                Label("Start listening here, then swipe back to the input.", systemImage: "3.circle.fill")
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+
+            Button {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            } label: {
+                Label("Open Settings", systemImage: "gear")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(16)
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var heroSection: some View {
