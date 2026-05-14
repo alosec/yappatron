@@ -1,6 +1,6 @@
 # Active Work
 
-**Last Updated:** 2026-05-11
+**Last Updated:** 2026-05-14
 
 ## iOS stabilization & next-phase scope (2026-05-10)
 
@@ -102,7 +102,7 @@ The infrastructure stays live (relay killed for the night, but DNS, Caddy entry,
 
 ## Current State
 
-### Mac app (main: 690f0e5)
+### Mac app (main)
 
 Speaker diarization shipped end-to-end with a hybrid architecture: Deepgram does word-level segmentation, local FluidAudio embeddings handle identity by matching against an enrolled-speaker registry. The override layer eliminates Deepgram's cross-speaker contamination on enrolled speakers; un-enrolled speakers fall through to Deepgram's IDs with the rename UI as backup.
 
@@ -119,6 +119,13 @@ just added confusion. The `LineBreakStyle` enum, the "Line Breaks
 Between Speakers" menu, and the persisted UserDefaults key were all
 removed; `SpeakerLabelMap.lineBreakSeparator` is now a single
 hardcoded constant.
+
+Issue #2 fixed on 2026-05-14: the stray lowercase `a` before `[Alex]`
+labels was the newline separator being typed through the generic
+`CGEvent(keyboardEventSource:virtualKey:0)` path. Key code `0` is the
+physical A key, so targets that ignored the Unicode newline payload saw
+`a` before the next label. `InputSimulator.typeString` now routes
+`\n` and `\r` through Return instead.
 
 Validated easy-mode (quiet 1:1) cleanly. Hard-mode (3+ speakers, ambient noise) recoverable but not perfect — fragmentation is fine since override matches against voiceprint not ID, occasional phantom-speaker noise from overlap remains.
 
@@ -148,6 +155,30 @@ Current iOS output model:
 - Auto-start on app open is available for the "keep listening, keep sending" workflow, within iOS background-audio limits.
 
 ## What's Done This Session
+
+### Diarization newline input fix (2026-05-14)
+
+Fixed GitHub issue #2, where Deepgram speaker labeling produced
+`a[Alex]` at the start of labeled runs. Diagnostic logs showed the
+diarized run text was clean, and live testing showed the first labeled
+utterance after restart did not get the stray `a` while later labeled
+utterances did. That pointed to the cross-utterance newline separator,
+not Deepgram or hybrid diarization.
+
+Root cause: `formatLabeled` prepended `SpeakerLabelMap.lineBreakSeparator`
+before later labels, and `InputSimulator.typeString` sent that newline
+through `typeChar`. `typeChar` builds Unicode key events using
+`virtualKey: 0`, which maps to the physical A key on macOS. Some input
+targets interpreted the event as `a` instead of a newline.
+
+Fix: `InputSimulator.typeString` special-cases `\n` and `\r` and calls
+`pressEnter()` instead of `typeChar`.
+
+Validation:
+- `swift build` passed.
+- `./scripts/run-dev.sh` rebuilt, signed, installed, and launched
+  `/Applications/Yappatron.app`.
+- Live labeled utterance test no longer produced the leading `a`.
 
 ### iOS Full Send UX pass (2026-05-08, late night)
 

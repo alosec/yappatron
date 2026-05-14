@@ -207,7 +207,11 @@ class InputSimulator {
         }
 
         for char in string {
-            typeChar(char)
+            if char == "\n" || char == "\r" {
+                pressEnter()
+            } else {
+                typeChar(char)
+            }
             Thread.sleep(forTimeInterval: 0.002) // Small delay for reliability
         }
     }
