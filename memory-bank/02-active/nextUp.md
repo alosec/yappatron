@@ -1,10 +1,33 @@
 # Next Up
 
-**Last Updated:** 2026-05-11
+**Last Updated:** 2026-05-14
 
 ## TOP PRIORITY (next session)
 
-### Validate input focus lock hardening — P0
+### iPhone efficacy and usability — P0
+
+After the Mac diarization suffix cleanup, return to iOS. The iPhone app
+is the best near-term path for live conversations where the Mac app
+cannot listen, especially FaceTime scenarios where the Mac-side mic
+stream is unavailable.
+
+Immediate focus:
+- Reproduce and fix iOS webhook/chat delivery firing before the true end
+  of thought.
+- Add clearer pending/queued/sent/failed state so delayed delivery does
+  not feel like lost speech.
+- Harden keyboard and webhook delivery semantics: durable queue, retries,
+  no duplicates, and visible failure.
+- Validate the current Deepgram EOU policy on device. If `speech_final`
+  is too aggressive for chat-bound destinations, prefer `UtteranceEnd`,
+  explicit stop/finalize, or a longer destination-specific silence
+  debounce.
+- Continue research on real-time meeting transcription / agent routing
+  tools to decide whether Yappatron stays a dictation layer, becomes a
+  Granola-like live conversation transcript, or later needs first-party
+  voice calls.
+
+### Validate input focus lock hardening — P1
 
 Input focus locking MVP and first UX hardening pass shipped on 2026-05-11. The hardening pass addressed the first live-test gaps: visible lock state, shortcut fallback, recent-input menu locking, continuous bottom-line indicator, and a Codex auto-enter timing improvement.
 

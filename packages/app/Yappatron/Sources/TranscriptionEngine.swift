@@ -213,11 +213,6 @@ class TranscriptionEngine: ObservableObject {
     // Track current partial for diffing
     private var currentPartial: String = ""
 
-    // Last speaker label emitted via onTranscription, so we only insert a fresh
-    // label/line-break when the displayed speaker actually changes across
-    // utterances. Tracking by label string instead of integer ID lets the hybrid
-    // override seamlessly bridge speakers that Deepgram split into multiple IDs.
-    private var lastLabeledLabel: String?
     // Most recent diarized runs for the current utterance, captured in onDiarizedFinal
     // and consumed by handleFinalTranscription to format the typed string. The
     // displayName field is non-nil when the hybrid diarizer overrode Deepgram's ID
@@ -407,43 +402,24 @@ class TranscriptionEngine: ObservableObject {
         }
     }
 
-    /// Format the diarized runs into a single typed string with `[Name] ` prefixes.
-    /// Every utterance always leads with a label so the reader (or downstream LLM)
-    /// can attribute every line. Within an utterance, label only changes when the
-    /// speaker actually changes — consecutive same-speaker words don't get re-labeled.
-    /// On every speaker change (including the first run of an utterance), a plain
-    /// newline is inserted so terminals/editors get a real line break.
-    private func formatLabeled(_ runs: [(speakerId: Int, text: String, displayName: String?)]) -> String {
-        let separator = SpeakerLabelMap.lineBreakSeparator
-        var output = ""
-        // Within-utterance tracking by display name (override-aware) so consecutive
-        // same-person runs don't re-label even if Deepgram changed IDs mid-utterance.
+    /// Format speaker attribution as an append-only suffix. The plain utterance
+    /// has already streamed into the destination, so final diarization must not
+    /// rewrite the beginning of that text.
+    private func formatSpeakerSuffix(_ runs: [(speakerId: Int, text: String, displayName: String?)]) -> String {
+        var labels: [String] = []
         var lastLabel: String? = nil
-        var isFirstSegment = true
         for run in runs {
             let trimmedRun = run.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedRun.isEmpty else { continue }
             let label = run.displayName ?? SpeakerLabelMap.name(forSpeakerId: run.speakerId)
             if label != lastLabel {
-                if !isFirstSegment {
-                    output += separator
-                } else if lastLabeledLabel != nil {
-                    output += separator
-                }
-                output += "[\(label)] \(trimmedRun)"
+                labels.append(label)
                 lastLabel = label
-            } else {
-                if !isFirstSegment {
-                    output += " "
-                }
-                output += trimmedRun
             }
-            isFirstSegment = false
         }
-        if let lastLabel = lastLabel {
-            lastLabeledLabel = lastLabel
-        }
-        return output
+
+        guard !labels.isEmpty else { return "" }
+        return "\n[\(labels.joined(separator: " -> "))]\n\n"
     }
 
     private func handleFinalTranscription(_ final: String) {
@@ -469,11 +445,15 @@ class TranscriptionEngine: ObservableObject {
     @MainActor
     private func emitFinalTranscription(_ trimmed: String) {
         // If diarization labeling is enabled and we have runs from the matching
-        // onDiarizedFinal, reformat the text with [Name] prefixes.
+        // onDiarizedFinal, append speaker attribution after the already-streamed
+        // utterance instead of rewriting a prefix into the beginning.
         var emittedText = trimmed
         if SpeakerLabelMap.enabled, let runs = pendingDiarizedRuns, !runs.isEmpty {
-            emittedText = formatLabeled(runs)
-            log("Final (labeled): '\(emittedText)'")
+            let suffix = formatSpeakerSuffix(runs)
+            if !suffix.isEmpty {
+                emittedText += suffix
+                log("Final (speaker suffix): '\(suffix)'")
+            }
         }
         pendingDiarizedRuns = nil
 

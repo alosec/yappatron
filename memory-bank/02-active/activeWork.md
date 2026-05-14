@@ -72,6 +72,23 @@ this session.
 
 ## Current Focus
 
+**NEXT FOCUS: iPhone app efficacy and usability**
+
+After the 2026-05-14 Mac diarization cleanup, return to the iPhone app.
+The goal is to make it reliable enough for live use when the Mac app
+cannot listen, especially around FaceTime's mic behavior. The next pass
+should focus on practical efficacy and usability: webhook timing,
+keyboard delivery confidence, visible pending/sent state, and whether
+the app feels safe to use for live agent routing.
+
+Known live-use issues to prioritize:
+- iOS webhook/chat delivery can still arrive before the user reaches a
+  real end-of-thought.
+- iOS delivery can feel delayed or opaque enough that the user worries a
+  spoken passage was lost.
+- Robustness matters more than new features until the delivery path is
+  hard to lose data through.
+
 **RECENTLY SHIPPED: Input focus locking + UX hardening**
 
 Yappatron now has an input focus locking MVP for multi-speaker / meeting-mode use. The user can designate the currently focused text input as the typing destination, and dictation writes are routed back to that destination even if the foreground app changes.
@@ -117,8 +134,7 @@ mode both behaved poorly in practice — terminals and Claude Code's
 chat input both handle a real newline correctly, so the variant modes
 just added confusion. The `LineBreakStyle` enum, the "Line Breaks
 Between Speakers" menu, and the persisted UserDefaults key were all
-removed; `SpeakerLabelMap.lineBreakSeparator` is now a single
-hardcoded constant.
+removed.
 
 Issue #2 fixed on 2026-05-14: the stray lowercase `a` before `[Alex]`
 labels was the newline separator being typed through the generic
@@ -126,6 +142,14 @@ labels was the newline separator being typed through the generic
 physical A key, so targets that ignored the Unicode newline payload saw
 `a` before the next label. `InputSimulator.typeString` now routes
 `\n` and `\r` through Return instead.
+
+Issue #3 fixed on 2026-05-14: speaker labels are now append-only
+suffixes instead of retroactive prefixes. Deepgram final chunks still
+stream forward as normal text, then diarization appends exactly
+`\n[Speaker]\n\n` at EOU. This avoids backspacing/replacing the
+already-typed utterance just to add `[Alex]` at the front. Multiple
+speaker runs in one finalized utterance append one bracketed sequence
+line such as `[Alex -> Callie]`.
 
 Validated easy-mode (quiet 1:1) cleanly. Hard-mode (3+ speakers, ambient noise) recoverable but not perfect — fragmentation is fine since override matches against voiceprint not ID, occasional phantom-speaker noise from overlap remains.
 
@@ -155,6 +179,31 @@ Current iOS output model:
 - Auto-start on app open is available for the "keep listening, keep sending" workflow, within iOS background-audio limits.
 
 ## What's Done This Session
+
+### Append-only diarization label suffixes (2026-05-14)
+
+Opened GitHub issue #3 and changed Mac diarization output from prefix
+labels to suffix labels.
+
+Old behavior:
+- Cloud finals streamed into the destination as plain text.
+- At EOU, diarization produced `[Alex] words...`.
+- `YappatronApp.handleFinalTranscription` diffed plain text against the
+  prefixed text, forcing backspacing/replacement of the already-typed
+  utterance.
+
+New behavior:
+- Cloud finals still stream append-only as plain text.
+- At EOU, diarization appends `\n[Speaker]\n\n`.
+- The diff engine sees the already-streamed utterance as a common
+  prefix, so it only types the suffix.
+- `finishUtteranceTyping` no longer adds a trailing space when the final
+  text already ends with a newline.
+
+This keeps speaker attribution while preserving the "typed text should
+not disappear under me" property. For multiple speaker runs inside a
+single finalized utterance, the suffix uses a bracketed speaker sequence
+such as `[Alex -> Speaker 1]`.
 
 ### Diarization newline input fix (2026-05-14)
 

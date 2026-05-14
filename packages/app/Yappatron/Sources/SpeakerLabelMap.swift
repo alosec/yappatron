@@ -8,11 +8,6 @@ enum SpeakerLabelMap {
     private static let mapKey = "speakerLabels.map"
     private static let seenIdsKey = "speakerLabels.seenIds"
 
-    /// Separator inserted between speaker turns. Always a plain newline —
-    /// terminals and editors both handle it correctly, and the legacy
-    /// inline / backslash-newline modes were unreliable in practice.
-    static let lineBreakSeparator = "\n"
-
     static var enabled: Bool {
         get { UserDefaults.standard.bool(forKey: enabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: enabledKey) }

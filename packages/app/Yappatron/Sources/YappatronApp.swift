@@ -189,7 +189,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func finishUtteranceTyping() {
-        inputSimulator.typeString(" ")
+        if !currentTypedText.hasSuffix("\n") {
+            inputSimulator.typeString(" ")
+        }
 
         if pressEnterAfterSpeech {
             Thread.sleep(forTimeInterval: 0.12)
