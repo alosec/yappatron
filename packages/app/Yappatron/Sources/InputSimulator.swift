@@ -201,17 +201,13 @@ class InputSimulator {
     
     /// Type a string character by character
     func typeString(_ string: String) {
-        if Self.shouldPasteTextInsteadOfTyping() {
+        if string.contains(where: { $0 == "\n" || $0 == "\r" }) || Self.shouldPasteTextInsteadOfTyping() {
             pasteString(string)
             return
         }
 
         for char in string {
-            if char == "\n" || char == "\r" {
-                pressEnter()
-            } else {
-                typeChar(char)
-            }
+            typeChar(char)
             Thread.sleep(forTimeInterval: 0.002) // Small delay for reliability
         }
     }

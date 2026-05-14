@@ -43,6 +43,9 @@ disappeared or stalled, even if it eventually settled correctly.
 - `formatSpeakerSuffix` appends `\n[Speaker]\n\n`,
 - multiple speaker runs collapse to a bracketed speaker sequence such as
   `[Alex -> Callie]`,
+- `InputSimulator.typeString` pastes any multiline string instead of
+  turning embedded newlines into Return keypresses, so chat inputs do not
+  submit the utterance and speaker label as separate messages,
 - `YappatronApp.finishUtteranceTyping` skips the old trailing-space
   insertion when the final text already ends with a newline.
 

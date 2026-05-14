@@ -149,7 +149,10 @@ stream forward as normal text, then diarization appends exactly
 `\n[Speaker]\n\n` at EOU. This avoids backspacing/replacing the
 already-typed utterance just to add `[Alex]` at the front. Multiple
 speaker runs in one finalized utterance append one bracketed sequence
-line such as `[Alex -> Callie]`.
+line such as `[Alex -> Callie]`. Follow-up the same night: multiline
+suffixes are pasted as text instead of emitted as Return keystrokes, so
+chat inputs do not split the utterance and attribution into separate
+messages.
 
 Validated easy-mode (quiet 1:1) cleanly. Hard-mode (3+ speakers, ambient noise) recoverable but not perfect — fragmentation is fine since override matches against voiceprint not ID, occasional phantom-speaker noise from overlap remains.
 
@@ -197,6 +200,9 @@ New behavior:
 - At EOU, diarization appends `\n[Speaker]\n\n`.
 - The diff engine sees the already-streamed utterance as a common
   prefix, so it only types the suffix.
+- Multiline suffixes are inserted via pasteboard text insertion, not
+  Return keypresses. This keeps transcript text and speaker attribution
+  in the same destination composer instead of sending two messages.
 - `finishUtteranceTyping` no longer adds a trailing space when the final
   text already ends with a newline.
 
