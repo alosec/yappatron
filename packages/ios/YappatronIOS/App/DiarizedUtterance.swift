@@ -1,19 +1,32 @@
 import Foundation
 
-/// Wire-format utterance posted to the configured webhook URL once the
-/// Deepgram `is_final` flag fires for a turn. One POST per finalized turn —
-/// partials/interim updates are never sent.
+/// Wire-format transcript event posted to the configured webhook URL.
+/// `append_text` is the relay-safe, append-only text that should be pasted.
 struct DiarizedUtterance: Codable {
+    let event_type: String?
+    let event_id: String
     let session_id: String
     let speaker: String?
     let speaker_id: Int?
     let text: String
+    let append_text: String?
+    let formatted_text: String?
     let start_ms: Int
     let end_ms: Int
     let is_final: Bool
     let source: String?
     let sequence: Int?
     let should_press_return: Bool?
+    let commit_reason: String?
+    let runs: [DiarizedUtteranceRun]?
+}
+
+struct DiarizedUtteranceRun: Codable {
+    let speaker: String?
+    let speaker_id: Int?
+    let text: String
+    let start_ms: Int
+    let end_ms: Int
 }
 
 struct TranscriptOutputSettings {
@@ -43,17 +56,33 @@ enum TranscriptOutputDestination: String {
 
 enum TranscriptOutputStatus: String {
     case queued = "Queued"
+    case sending = "Sending"
+    case retrying = "Retrying"
     case sent = "Sent"
     case failed = "Failed"
 }
 
 struct TranscriptOutputEvent: Identifiable, Equatable {
-    let id = UUID()
+    let id: String
     let timestamp = Date()
     let destination: TranscriptOutputDestination
     let status: TranscriptOutputStatus
     let text: String
     let detail: String?
+
+    init(
+        id: String = UUID().uuidString,
+        destination: TranscriptOutputDestination,
+        status: TranscriptOutputStatus,
+        text: String,
+        detail: String?
+    ) {
+        self.id = id
+        self.destination = destination
+        self.status = status
+        self.text = text
+        self.detail = detail
+    }
 }
 
 enum TranscriptOutputRouter {
@@ -61,7 +90,7 @@ enum TranscriptOutputRouter {
         _ utterance: DiarizedUtterance,
         settings: TranscriptOutputSettings,
         sharedStore: SharedTranscriptStore,
-        webhookClient: WebhookClient
+        webhookOutbox: WebhookOutbox
     ) -> [TranscriptOutputEvent] {
         var events: [TranscriptOutputEvent] = []
 
@@ -86,16 +115,10 @@ enum TranscriptOutputRouter {
         }
 
         if settings.streamToWebhook && !settings.webhookURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            webhookClient.send(
+            events.append(webhookOutbox.enqueue(
                 utterance,
                 to: settings.webhookURL,
                 bearerToken: settings.webhookToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : settings.webhookToken
-            )
-            events.append(TranscriptOutputEvent(
-                destination: .webhook,
-                status: .queued,
-                text: utterance.text,
-                detail: nil
             ))
         }
 

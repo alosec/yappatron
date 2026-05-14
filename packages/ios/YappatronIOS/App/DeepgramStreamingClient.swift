@@ -45,10 +45,11 @@ final class DeepgramStreamingClient: NSObject {
     /// Called once per completed utterance with diarized runs aggregated across
     /// Deepgram `is_final` fragments. Empty array if Deepgram didn't return word
     /// data (e.g. diarize disabled or short interim).
-    var onDiarizedFinal: (([DiarizedRun]) -> Void)?
+    var onDiarizedFinal: ((DeepgramDiarizedTurn) -> Void)?
     var onError: ((String) -> Void)?
 
     private let apiKey: String
+    private let commitPolicy: DeepgramCommitPolicy
     private var session: URLSession?
     private var sessionDelegate: WebSocketDelegate?
     private var webSocketTask: URLSessionWebSocketTask?
@@ -61,10 +62,11 @@ final class DeepgramStreamingClient: NSObject {
     private var currentDiarizedRuns: [DiarizedRun] = []
     private var isConnected = false
     private var eouTask: Task<Void, Never>?
-    private let eouDebounceMs: UInt64 = 2_750
+    private var eouGeneration = 0
 
-    init(apiKey: String) {
+    init(apiKey: String, commitPolicy: DeepgramCommitPolicy) {
         self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.commitPolicy = commitPolicy
     }
 
     func connect() async throws {
@@ -128,7 +130,7 @@ final class DeepgramStreamingClient: NSObject {
 
         try? await webSocketTask.send(.string("{\"type\":\"Finalize\"}"))
         try? await Task.sleep(nanoseconds: 1_200_000_000)
-        emitPendingUtterance()
+        emitPendingUtterance(reason: .finalize)
 
         return currentTranscript()
     }
@@ -212,7 +214,7 @@ final class DeepgramStreamingClient: NSObject {
         case "Results":
             handleResults(message)
         case "UtteranceEnd":
-            emitPendingUtterance()
+            scheduleEOU(reason: .utteranceEnd, delayMs: commitPolicy.utteranceEndGraceMs)
         case "Error":
             DispatchQueue.main.async { [weak self] in
                 self?.onError?(message.message ?? "Unknown Deepgram error.")
@@ -238,17 +240,23 @@ final class DeepgramStreamingClient: NSObject {
                 appendDiarizedRuns(words.intoRuns())
             }
 
-            publishTranscript(isFinal: false)
+            publishTranscript(isFinal: true)
 
-            if message.from_finalize == true || message.speech_final == true {
-                emitPendingUtterance()
+            if message.from_finalize == true {
+                emitPendingUtterance(reason: .finalize)
+            } else if message.speech_final == true {
+                if commitPolicy.speechFinalGraceMs == 0 {
+                    emitPendingUtterance(reason: .speechFinal)
+                } else {
+                    scheduleEOU(reason: .speechFinalGrace, delayMs: commitPolicy.speechFinalGraceMs)
+                }
             } else {
-                scheduleEOU()
+                scheduleEOU(reason: .silenceDebounce, delayMs: commitPolicy.silenceDebounceMs)
             }
         } else {
             latestInterim = transcript
             publishTranscript(isFinal: false)
-            scheduleEOU()
+            scheduleEOU(reason: .silenceDebounce, delayMs: commitPolicy.silenceDebounceMs)
         }
     }
 
@@ -301,21 +309,31 @@ final class DeepgramStreamingClient: NSObject {
         }
     }
 
-    private func scheduleEOU() {
+    private func scheduleEOU(reason: DeepgramCommitReason, delayMs: UInt64) {
         eouTask?.cancel()
+        eouGeneration += 1
+        let generation = eouGeneration
+
         eouTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: (self?.eouDebounceMs ?? 2_750) * 1_000_000)
+            try? await Task.sleep(nanoseconds: delayMs * 1_000_000)
             guard !Task.isCancelled else { return }
-            self?.emitPendingUtterance()
+            guard self?.eouGeneration == generation else { return }
+            self?.emitPendingUtterance(reason: reason)
         }
     }
 
-    private func emitPendingUtterance() {
+    private func emitPendingUtterance(reason: DeepgramCommitReason) {
+        if reason != .finalize, !latestInterim.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            scheduleEOU(reason: .silenceDebounce, delayMs: commitPolicy.silenceDebounceMs)
+            return
+        }
+
         let utterance = currentUtterance.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !utterance.isEmpty else { return }
 
         eouTask?.cancel()
         eouTask = nil
+        eouGeneration += 1
 
         let runs = currentDiarizedRuns.isEmpty
             ? [DiarizedRun(speakerID: -1, text: utterance, startSec: 0, endSec: 0)]
@@ -326,8 +344,15 @@ final class DeepgramStreamingClient: NSObject {
 
         let onTranscript = self.onTranscript
         let onDiarized = self.onDiarizedFinal
+        let turn = DeepgramDiarizedTurn(
+            runs: runs,
+            fullTranscript: fullTranscript,
+            reason: reason,
+            emittedAt: Date()
+        )
+        print("Deepgram commit reason=\(reason.rawValue) runs=\(runs.count) chars=\(utterance.count)")
         DispatchQueue.main.async {
-            onDiarized?(runs)
+            onDiarized?(turn)
             onTranscript?(fullTranscript, true)
         }
     }

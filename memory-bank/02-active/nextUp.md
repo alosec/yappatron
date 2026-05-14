@@ -12,16 +12,23 @@ cannot listen, especially FaceTime scenarios where the Mac-side mic
 stream is unavailable.
 
 Immediate focus:
-- Reproduce and fix iOS webhook/chat delivery firing before the true end
-  of thought.
-- Add clearer pending/queued/sent/failed state so delayed delivery does
-  not feel like lost speech.
-- Harden keyboard and webhook delivery semantics: durable queue, retries,
-  no duplicates, and visible failure.
+- Real-device validate the new iOS webhook shape: stable text streams
+  during speech, EOU submits only the missing remainder plus suffix, and
+  diarized speaker labels appear after the utterance in Mac style.
+- Verify the remote relay receives `append_text` payloads, pastes stream
+  deltas immediately, and preserves legacy final-only payload behavior.
+- Add clearer pending/queued/sent/failed state if the current feed still
+  feels too opaque after device testing.
+- Harden keyboard and webhook delivery semantics around duplicates and
+  visible failure.
 - Validate the current Deepgram EOU policy on device. If `speech_final`
   is too aggressive for chat-bound destinations, prefer `UtteranceEnd`,
   explicit stop/finalize, or a longer destination-specific silence
   debounce.
+- Follow up on issue #5: iOS Deepgram Listening currently streams
+  continuous mic buffers, including silence. Refactor toward local
+  speech/silence gating so armed listening does not burn Deepgram time
+  during silent periods.
 - Continue research on real-time meeting transcription / agent routing
   tools to decide whether Yappatron stays a dictation layer, becomes a
   Granola-like live conversation transcript, or later needs first-party
@@ -97,6 +104,7 @@ Pairs naturally with the broader "build this into the agent product" plan — on
 - ✓ **Input focus lock UX hardening shipped** (2026-05-11) — locked-window outline, recent-input menu locking, `⌃⌥⌘L` plus key-monitor fallback, continuous bottom-line indicator style, Codex auto-enter settle delay
 - ✓ **RMS-reactive bottom indicator validated** (2026-05-11) — live test confirmed the continuous bar now stays calm on silence and responds correctly to speech amplitude
 - ✓ **iOS keyboard dictation UX pass** (2026-05-11) — URL handoff from keyboard to app, live dictation state bridge with stale-state heartbeat, live delta insertion into active input, checkmark stop/commit, and simplified main app
+- ✓ **iOS webhook append_text refactor** (2026-05-14) — stable text deltas stream during speech, EOU sends a suffix/submit final payload, and diarized labels are suffixes matching the Mac app's append-only model
 - ✓ **Hybrid diarization shipped** (2026-05-08) — Deepgram word-level segmentation + local FluidAudio embedding override, 0.45 cosine threshold, 0.3s min run, race-fix for typing waiting on override task
 - ✓ **`feature/local-segmenter` branched** (2026-05-08) — experimental local-only diarization preserved off-main; FluidAudio segmentation was coarser than Deepgram's word-level boundaries in real testing
 - ✓ **FluidAudio 0.9.1 → 0.14.4** (2026-05-08) — Swift 6.3 toolchain compatibility; updated `LocalSTTProvider.loadModels(from:)` and `BatchProcessor` decoder-state API

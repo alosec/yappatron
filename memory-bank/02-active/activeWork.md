@@ -82,10 +82,17 @@ keyboard delivery confidence, visible pending/sent state, and whether
 the app feels safe to use for live agent routing.
 
 Known live-use issues to prioritize:
-- iOS webhook/chat delivery can still arrive before the user reaches a
-  real end-of-thought.
-- iOS delivery can feel delayed or opaque enough that the user worries a
-  spoken passage was lost.
+- iOS Deepgram now uses a conservative complete-thought policy and a
+  webhook outbox, but it still needs real-device validation under live
+  conversational pressure.
+- iOS webhook streaming now mirrors the Mac append-only shape: stable
+  transcript text streams forward during speech, then EOU sends only the
+  missing remainder plus a suffix/submit event. Diarized attribution is
+  a suffix line instead of a prefix.
+- Separate issue #5 tracks a significant follow-up: the current iOS
+  Deepgram listening state streams mic buffers continuously, including
+  silence. The Mac app gates/cuts speech locally before sending audio;
+  iOS needs the same concept later.
 - Robustness matters more than new features until the delivery path is
   hard to lose data through.
 
@@ -174,11 +181,15 @@ Latest UX direction: "Full Send" should be the primary mode. The app screen is n
 Current iOS output model:
 
 - Local mode (Apple Speech) is a first-class source. It emits finalized chunks using a pause/debounce boundary, restarts recognition tasks across Apple Speech task endings, and can deliver those chunks to outputs.
-- Deepgram mode still supports diarized runs and speaker naming. iOS delivery is now utterance-boundary debounced instead of firing every Deepgram `is_final` fragment.
+- Deepgram mode still supports diarized runs and speaker naming. iOS delivery is now utterance-boundary debounced instead of firing every Deepgram `is_final` fragment. Stable Deepgram final fragments can stream to the webhook as append-only deltas during speech; EOU sends a final append payload with the Mac-style speaker suffix and submit newline.
 - Outputs are configurable independently of the engine:
   - Webhook POST with optional bearer token.
   - Yappatron keyboard auto-insert via a queued tagged pasteboard bridge.
   - Optional return key after keyboard insertion.
+- The webhook relay contract now prefers `append_text`:
+  - `event_type: "stream_delta"` posts append-only text and `is_final: false`.
+  - `event_type: "utterance_end"` posts the missing remainder plus `\n[Speaker]\n` (or `\n` when no diarized speaker is available) and `is_final: true`.
+  - Legacy final-only payloads without `append_text` remain supported by the relay.
 - Keyboard extension now polls while visible and inserts queued chunks once, instead of only exposing the latest chunk.
 - Keyboard extension now has a Spokenly-style dictation flow: start dictation deep-links to the companion app, the app starts listening and publishes live state, the keyboard streams live transcript deltas into the active input, and the checkmark commits remaining text / requests stop.
 - The keyboard bridge tags live state, finalized chunks, and keyboard commands separately; recording state expires if the app stops publishing heartbeats, so the keyboard should fall back to an honest "Start Dictation" state instead of pretending to record after iOS kills the app.

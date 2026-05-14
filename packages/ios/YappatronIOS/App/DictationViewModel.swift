@@ -76,7 +76,12 @@ final class DictationViewModel: ObservableObject {
         didSet { defaults.set(webhookToken, forKey: DefaultsKeys.webhookToken) }
     }
     @Published var streamToWebhook: Bool {
-        didSet { defaults.set(streamToWebhook, forKey: DefaultsKeys.streamToWebhook) }
+        didSet {
+            defaults.set(streamToWebhook, forKey: DefaultsKeys.streamToWebhook)
+            if streamToWebhook && !oldValue {
+                lastWebhookStreamedTranscript = transcript
+            }
+        }
     }
     @Published private(set) var lastWebhookError: String?
     @Published private(set) var webhookPostsSucceeded: Int = 0
@@ -84,10 +89,13 @@ final class DictationViewModel: ObservableObject {
     @Published private(set) var outputEvents: [TranscriptOutputEvent] = []
     @Published private(set) var deliveredUtteranceCount: Int = 0
     @Published private(set) var lastDeliveredText: String = ""
+    @Published var thoughtPauseSeconds: Double {
+        didSet { defaults.set(thoughtPauseSeconds, forKey: DefaultsKeys.thoughtPauseSeconds) }
+    }
     @Published var keyboardLaunchMessageVisible = false
 
     let speakerLabels = SpeakerLabelStore()
-    private let webhookClient = WebhookClient()
+    private let webhookOutbox = WebhookOutbox()
     private var currentSessionID = UUID().uuidString
 
     var isRecording: Bool {
@@ -120,6 +128,8 @@ final class DictationViewModel: ObservableObject {
     private var sessionStartedAt = Date()
     private var lastDeliveryDate = Date()
     private var outputSequence = 0
+    private var lastWebhookStreamedTranscript = ""
+    private var webhookStreamSequence = 0
     private var didAutoStart = false
 
     private enum DefaultsKeys {
@@ -129,6 +139,7 @@ final class DictationViewModel: ObservableObject {
         static let streamToWebhook = "streamToWebhook"
         static let pressReturnAfterSend = "pressReturnAfterSend"
         static let autoStartListening = "autoStartListening"
+        static let thoughtPauseSeconds = "thoughtPauseSeconds"
     }
 
     init() {
@@ -141,33 +152,26 @@ final class DictationViewModel: ObservableObject {
         webhookURL = UserDefaults.standard.string(forKey: DefaultsKeys.webhookURL) ?? ""
         webhookToken = UserDefaults.standard.string(forKey: DefaultsKeys.webhookToken) ?? ""
         streamToWebhook = UserDefaults.standard.bool(forKey: DefaultsKeys.streamToWebhook)
+        let savedThoughtPause = UserDefaults.standard.double(forKey: DefaultsKeys.thoughtPauseSeconds)
+        thoughtPauseSeconds = savedThoughtPause > 0 ? savedThoughtPause : 3.5
         sharedStore.pressReturnAfterInsert = pressReturnAfterSend
         publishDictationState()
         configureLifecycleObservers()
 
-        webhookClient.onResult = { [weak self] result in
+        webhookOutbox.onEvent = { [weak self] event in
             Task { @MainActor in
                 guard let self else { return }
-                switch result {
-                case .success:
+                switch event.status {
+                case .sent:
                     self.webhookPostsSucceeded += 1
                     self.lastWebhookError = nil
-                    self.prependOutputEvent(TranscriptOutputEvent(
-                        destination: .webhook,
-                        status: .sent,
-                        text: "Webhook accepted",
-                        detail: nil
-                    ))
-                case .failure(let error):
+                case .failed:
                     self.webhookPostsFailed += 1
-                    self.lastWebhookError = error.localizedDescription
-                    self.prependOutputEvent(TranscriptOutputEvent(
-                        destination: .webhook,
-                        status: .failed,
-                        text: error.localizedDescription,
-                        detail: nil
-                    ))
+                    self.lastWebhookError = event.detail
+                case .queued, .sending, .retrying:
+                    break
                 }
+                self.upsertOutputEvent(event)
             }
         }
     }
@@ -265,6 +269,11 @@ final class DictationViewModel: ObservableObject {
         return labels.joined(separator: " + ")
     }
 
+    private var deepgramCommitPolicy: DeepgramCommitPolicy {
+        let mode: DeepgramCommitPolicy.Mode = (streamToWebhook || pressReturnAfterSend) ? .conservative : .responsive
+        return .make(mode: mode, thoughtPauseSeconds: thoughtPauseSeconds)
+    }
+
     func autoStartIfNeeded() {
         guard autoStartListening, !didAutoStart, !isRecording else { return }
         didAutoStart = true
@@ -331,6 +340,8 @@ final class DictationViewModel: ObservableObject {
             sessionStartedAt = Date()
             lastDeliveryDate = sessionStartedAt
             outputSequence = 0
+            webhookStreamSequence = 0
+            lastWebhookStreamedTranscript = ""
             lastDeliveredLocalTranscript = ""
             lastDeliveredText = ""
             deliveredUtteranceCount = 0
@@ -389,7 +400,7 @@ final class DictationViewModel: ObservableObject {
         await audioSendTask?.value
 
         let finalText = (try? await deepgramClient?.finish()) ?? transcript
-        receiveTranscript(finalText)
+        receiveTranscript(finalText, streamWebhookUpdate: true)
 
         audioSendTask = nil
         await deepgramClient?.disconnect()
@@ -422,45 +433,201 @@ final class DictationViewModel: ObservableObject {
         sharedStore.clearTranscript(removePasteboard: true)
     }
 
-    private func receiveTranscript(_ text: String) {
+    private func receiveTranscript(_ text: String, streamWebhookUpdate: Bool = false) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = trimmedText
+        if streamWebhookUpdate {
+            streamWebhookTranscriptIfNeeded(trimmedText)
+        }
         publishDictationState()
     }
 
-    private func handleDiarizedFinal(_ runs: [DiarizedRun]) {
+    private var hasWebhookEndpoint: Bool {
+        streamToWebhook && !webhookURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var webhookBearerToken: String? {
+        let token = webhookToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        return token.isEmpty ? nil : token
+    }
+
+    private func streamWebhookTranscriptIfNeeded(_ fullTranscript: String) {
+        guard hasWebhookEndpoint, isRecording else { return }
+
+        let normalized = fullTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+
+        let rawDelta = appendOnlyDelta(from: lastWebhookStreamedTranscript, to: normalized)
+        let appendText = normalizedWebhookAppendText(rawDelta, after: lastWebhookStreamedTranscript)
+        lastWebhookStreamedTranscript = normalized
+
+        guard !appendText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        webhookStreamSequence += 1
+        let now = Int(Date().timeIntervalSince(sessionStartedAt) * 1000)
+        let utterance = DiarizedUtterance(
+            event_type: "stream_delta",
+            event_id: "\(currentSessionID)-stream-\(webhookStreamSequence)",
+            session_id: currentSessionID,
+            speaker: nil,
+            speaker_id: nil,
+            text: appendText,
+            append_text: appendText,
+            formatted_text: nil,
+            start_ms: now,
+            end_ms: now,
+            is_final: false,
+            source: backend.rawValue,
+            sequence: nil,
+            should_press_return: false,
+            commit_reason: nil,
+            runs: nil
+        )
+        webhookOutbox.sendTransient(utterance, to: webhookURL, bearerToken: webhookBearerToken)
+    }
+
+    private func finalWebhookAppendText(fullTranscript: String, suffix: String) -> String? {
+        guard hasWebhookEndpoint else { return nil }
+
+        let normalized = fullTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawDelta = appendOnlyDelta(from: lastWebhookStreamedTranscript, to: normalized)
+        let appendText = normalizedWebhookAppendText(rawDelta, after: lastWebhookStreamedTranscript)
+        lastWebhookStreamedTranscript = normalized
+        return appendText + suffix
+    }
+
+    private func appendOnlyDelta(from previous: String, to current: String) -> String {
+        guard !current.isEmpty else { return "" }
+        guard !previous.isEmpty else { return current }
+
+        if current.hasPrefix(previous) {
+            return String(current.dropFirst(previous.count))
+        }
+
+        if current.count > previous.count {
+            return String(current.dropFirst(previous.count))
+        }
+
+        return ""
+    }
+
+    private func normalizedWebhookAppendText(_ rawDelta: String, after previous: String) -> String {
+        guard !rawDelta.isEmpty else { return "" }
+
+        if previous.isEmpty {
+            return rawDelta.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        guard let first = rawDelta.first,
+              let lastPrevious = previous.last,
+              !first.isWhitespace,
+              !lastPrevious.isWhitespace,
+              first.isLetter || first.isNumber else {
+            return rawDelta
+        }
+
+        return " \(rawDelta)"
+    }
+
+    private func handleDiarizedFinal(_ turn: DeepgramDiarizedTurn) {
+        let runs = turn.runs
         for run in runs {
             if run.speakerID >= 0 {
                 speakerLabels.recordSeen(run.speakerID)
             }
         }
 
-        for run in runs {
+        let cleanedRuns = runs.compactMap { run -> DiarizedRun? in
             let trimmed = run.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-
-            let speakerName: String?
-            if run.speakerID >= 0 {
-                speakerName = speakerLabels.name(for: run.speakerID)
-            } else {
-                speakerName = nil
-            }
-
-            outputSequence += 1
-            let utterance = DiarizedUtterance(
-                session_id: currentSessionID,
-                speaker: speakerName,
-                speaker_id: run.speakerID >= 0 ? run.speakerID : nil,
+            guard !trimmed.isEmpty else { return nil }
+            return DiarizedRun(
+                speakerID: run.speakerID,
                 text: trimmed,
-                start_ms: Int(run.startSec * 1000),
-                end_ms: Int(run.endSec * 1000),
-                is_final: true,
-                source: backend.rawValue,
-                sequence: outputSequence,
-                should_press_return: pressReturnAfterSend
+                startSec: run.startSec,
+                endSec: run.endSec
             )
-            deliver(utterance)
         }
+        guard !cleanedRuns.isEmpty else { return }
+
+        outputSequence += 1
+        let text = cleanedRuns.map(\.text).joined(separator: " ")
+        let runPayloads = cleanedRuns.map { run in
+            DiarizedUtteranceRun(
+                speaker: speakerName(for: run.speakerID),
+                speaker_id: run.speakerID >= 0 ? run.speakerID : nil,
+                text: run.text,
+                start_ms: Int(run.startSec * 1000),
+                end_ms: Int(run.endSec * 1000)
+            )
+        }
+        let suffix = speakerSuffixText(for: cleanedRuns)
+        let appendText = finalWebhookAppendText(fullTranscript: turn.fullTranscript, suffix: suffix)
+
+        let utterance = DiarizedUtterance(
+            event_type: "utterance_end",
+            event_id: makeOutputEventID(sequence: outputSequence),
+            session_id: currentSessionID,
+            speaker: singleSpeakerName(in: cleanedRuns),
+            speaker_id: singleSpeakerID(in: cleanedRuns),
+            text: text,
+            append_text: appendText,
+            formatted_text: formattedText(text: text, suffix: suffix),
+            start_ms: runPayloads.map(\.start_ms).min() ?? 0,
+            end_ms: runPayloads.map(\.end_ms).max() ?? 0,
+            is_final: true,
+            source: backend.rawValue,
+            sequence: outputSequence,
+            should_press_return: streamToWebhook ? true : pressReturnAfterSend,
+            commit_reason: turn.reason.rawValue,
+            runs: runPayloads
+        )
+        deliver(utterance)
+    }
+
+    private func makeOutputEventID(sequence: Int) -> String {
+        "\(currentSessionID)-\(sequence)"
+    }
+
+    private func speakerName(for speakerID: Int) -> String? {
+        speakerID >= 0 ? speakerLabels.name(for: speakerID) : nil
+    }
+
+    private func singleSpeakerID(in runs: [DiarizedRun]) -> Int? {
+        let speakerIDs = Set(runs.map(\.speakerID).filter { $0 >= 0 })
+        return speakerIDs.count == 1 ? speakerIDs.first : nil
+    }
+
+    private func singleSpeakerName(in runs: [DiarizedRun]) -> String? {
+        guard let speakerID = singleSpeakerID(in: runs) else {
+            return nil
+        }
+        return speakerName(for: speakerID)
+    }
+
+    private func speakerSuffixText(for runs: [DiarizedRun]) -> String {
+        let labels = runs.reduce(into: [String]()) { labels, run in
+            guard let speaker = speakerName(for: run.speakerID), !labels.contains(speaker) else {
+                return
+            }
+            labels.append(speaker)
+        }
+
+        guard !labels.isEmpty else {
+            return "\n"
+        }
+
+        return "\n[\(labels.joined(separator: " -> "))]\n"
+    }
+
+    private func formattedText(text: String, suffix: String) -> String? {
+        let cleanedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedText.isEmpty else { return nil }
+
+        if suffix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return cleanedText
+        }
+
+        return cleanedText + suffix
     }
 
     private func startLocalRecording() async throws {
@@ -468,7 +635,7 @@ final class DictationViewModel: ObservableObject {
         recognizer.onTranscript = { [weak self] text, isFinal in
             Task { @MainActor in
                 guard let self else { return }
-                self.receiveTranscript(text)
+                self.receiveTranscript(text, streamWebhookUpdate: isFinal)
                 self.scheduleLocalDelivery(for: text, isFinal: isFinal)
             }
         }
@@ -517,18 +684,25 @@ final class DictationViewModel: ObservableObject {
         guard !trimmedChunk.isEmpty else { return }
 
         let now = Date()
+        let appendText = finalWebhookAppendText(fullTranscript: fullTranscript, suffix: "\n")
         outputSequence += 1
         let utterance = DiarizedUtterance(
+            event_type: "utterance_end",
+            event_id: makeOutputEventID(sequence: outputSequence),
             session_id: currentSessionID,
             speaker: nil,
             speaker_id: nil,
             text: trimmedChunk,
+            append_text: appendText,
+            formatted_text: nil,
             start_ms: Int(lastDeliveryDate.timeIntervalSince(sessionStartedAt) * 1000),
             end_ms: Int(now.timeIntervalSince(sessionStartedAt) * 1000),
             is_final: true,
             source: backend.rawValue,
             sequence: outputSequence,
-            should_press_return: pressReturnAfterSend
+            should_press_return: streamToWebhook ? true : pressReturnAfterSend,
+            commit_reason: DeepgramCommitReason.localFinal.rawValue,
+            runs: nil
         )
 
         deliver(utterance)
@@ -547,36 +721,45 @@ final class DictationViewModel: ObservableObject {
                 pressReturnAfterSend: pressReturnAfterSend
             ),
             sharedStore: sharedStore,
-            webhookClient: webhookClient
+            webhookOutbox: webhookOutbox
         )
 
         deliveredUtteranceCount += 1
-        lastDeliveredText = utterance.text
+        lastDeliveredText = utterance.formatted_text ?? utterance.text
         prependOutputEvents(events)
     }
 
     private func prependOutputEvents(_ events: [TranscriptOutputEvent]) {
         guard !events.isEmpty else { return }
-        outputEvents.insert(contentsOf: events.reversed(), at: 0)
+        events.reversed().forEach(upsertOutputEvent)
+    }
+
+    private func prependOutputEvent(_ event: TranscriptOutputEvent) {
+        upsertOutputEvent(event)
+    }
+
+    private func upsertOutputEvent(_ event: TranscriptOutputEvent) {
+        if let index = outputEvents.firstIndex(where: { $0.id == event.id }) {
+            outputEvents[index] = event
+        } else {
+            outputEvents.insert(event, at: 0)
+        }
+
         if outputEvents.count > 12 {
             outputEvents.removeLast(outputEvents.count - 12)
         }
     }
 
-    private func prependOutputEvent(_ event: TranscriptOutputEvent) {
-        prependOutputEvents([event])
-    }
-
     private func startDeepgramRecording() async throws {
-        let client = DeepgramStreamingClient(apiKey: apiKey)
-        client.onTranscript = { [weak self] text, _ in
+        let client = DeepgramStreamingClient(apiKey: apiKey, commitPolicy: deepgramCommitPolicy)
+        client.onTranscript = { [weak self] text, isFinal in
             Task { @MainActor in
-                self?.receiveTranscript(text)
+                self?.receiveTranscript(text, streamWebhookUpdate: isFinal)
             }
         }
-        client.onDiarizedFinal = { [weak self] runs in
+        client.onDiarizedFinal = { [weak self] turn in
             Task { @MainActor in
-                self?.handleDiarizedFinal(runs)
+                self?.handleDiarizedFinal(turn)
             }
         }
         client.onError = { [weak self] message in

@@ -1,13 +1,12 @@
 import Foundation
 
-/// Posts diarized utterances to a user-configured webhook URL. One async POST
-/// per finalized utterance. Single retry on transient failure (5xx or network
-/// error); 4xx returns immediately. No queue, no buffering — kept dumb on
-/// purpose so failures are visible and don't pile up across a long session.
+/// Posts diarized utterances to a user-configured webhook URL. Retry and queue
+/// state live in `WebhookOutbox`; this client only performs one HTTP attempt.
 final class WebhookClient {
     enum WebhookError: LocalizedError {
         case invalidURL
         case http(Int, String)
+        case encoding(Error)
 
         var errorDescription: String? {
             switch self {
@@ -16,6 +15,17 @@ final class WebhookClient {
             case .http(let code, let body):
                 let snippet = body.prefix(200)
                 return "Webhook returned HTTP \(code): \(snippet)"
+            case .encoding(let error):
+                return error.localizedDescription
+            }
+        }
+
+        var isTransient: Bool {
+            switch self {
+            case .http(let code, _):
+                return code >= 500
+            case .invalidURL, .encoding:
+                return false
             }
         }
     }
@@ -33,16 +43,11 @@ final class WebhookClient {
         self.session = URLSession(configuration: config)
     }
 
-    /// Fire-and-forget post. Caller doesn't await delivery; success/failure
-    /// is reported through `onResult` if set.
-    var onResult: ((Result<Void, Error>) -> Void)?
-
-    func send(_ utterance: DiarizedUtterance, to urlString: String, bearerToken: String?) {
+    func send(_ utterance: DiarizedUtterance, to urlString: String, bearerToken: String?) async throws {
         guard let url = URL(string: urlString),
               let scheme = url.scheme?.lowercased(),
               scheme == "https" || scheme == "http" else {
-            onResult?(.failure(WebhookError.invalidURL))
-            return
+            throw WebhookError.invalidURL
         }
 
         var request = URLRequest(url: url)
@@ -56,47 +61,18 @@ final class WebhookClient {
         do {
             payload = try JSONEncoder().encode(utterance)
         } catch {
-            onResult?(.failure(error))
-            return
+            throw WebhookError.encoding(error)
         }
         request.httpBody = payload
 
-        Task { [session, onResult] in
-            await Self.attempt(session: session, request: request, retriesRemaining: 1, report: onResult)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
         }
-    }
 
-    private static func attempt(
-        session: URLSession,
-        request: URLRequest,
-        retriesRemaining: Int,
-        report: ((Result<Void, Error>) -> Void)?
-    ) async {
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                report?(.failure(URLError(.badServerResponse)))
-                return
-            }
-            if (200...299).contains(http.statusCode) {
-                report?(.success(()))
-                return
-            }
-            // 5xx → retry once. 4xx → fail fast.
-            if http.statusCode >= 500 && retriesRemaining > 0 {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                await attempt(session: session, request: request, retriesRemaining: retriesRemaining - 1, report: report)
-                return
-            }
+        guard (200...299).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
-            report?(.failure(WebhookError.http(http.statusCode, body)))
-        } catch {
-            if retriesRemaining > 0 {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                await attempt(session: session, request: request, retriesRemaining: retriesRemaining - 1, report: report)
-                return
-            }
-            report?(.failure(error))
+            throw WebhookError.http(http.statusCode, body)
         }
     }
 }

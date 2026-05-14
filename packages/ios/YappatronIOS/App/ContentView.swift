@@ -257,6 +257,18 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityLabel("Save API key")
                 }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("Thought pause", systemImage: "timer")
+                        Spacer()
+                        Text(String(format: "%.1fs", viewModel.thoughtPauseSeconds))
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.subheadline.weight(.semibold))
+
+                    Slider(value: $viewModel.thoughtPauseSeconds, in: 2.0...6.0, step: 0.25)
+                }
             }
         }
     }
@@ -304,6 +316,40 @@ struct ContentView: View {
             }
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.secondary)
+
+            if !viewModel.outputEvents.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.outputEvents.prefix(5)) { event in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: outputEventIconName(for: event.status))
+                                .foregroundStyle(outputEventColor(for: event.status))
+                                .frame(width: 18)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(event.destination.rawValue)
+                                        .font(.caption.weight(.semibold))
+                                    Text(event.status.rawValue)
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Text(event.text)
+                                    .font(.caption)
+                                    .lineLimit(2)
+
+                                if let detail = event.detail {
+                                    Text(detail)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
         }
         .padding(16)
         .background(Color(.systemBackground))
@@ -368,6 +414,34 @@ struct ContentView: View {
 
     private var recordButtonColor: Color {
         viewModel.isRecording ? .red : .blue
+    }
+
+    private func outputEventIconName(for status: TranscriptOutputStatus) -> String {
+        switch status {
+        case .queued:
+            return "tray.fill"
+        case .sending:
+            return "paperplane.fill"
+        case .retrying:
+            return "arrow.clockwise"
+        case .sent:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "xmark.octagon.fill"
+        }
+    }
+
+    private func outputEventColor(for status: TranscriptOutputStatus) -> Color {
+        switch status {
+        case .queued:
+            return .secondary
+        case .sending, .retrying:
+            return .orange
+        case .sent:
+            return .green
+        case .failed:
+            return .red
+        }
     }
 }
 
