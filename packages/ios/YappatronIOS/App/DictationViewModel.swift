@@ -193,15 +193,16 @@ final class DictationViewModel: ObservableObject {
     private var bufferedDeepgramChunks: [Data] = []
     private var speechHitCount = 0
     private var lastSpeechDetectedAt: Date?
+    private var ambientNoiseFloor = 0.0015
     private var isDeepgramArmed = false
     private var isDeepgramOpening = false
     private var isDeepgramFinalizing = false
     private var didAutoStart = false
 
-    private let speechStartThreshold = 0.012
-    private let speechContinueThreshold = 0.007
+    private let speechStartThreshold = 0.0035
+    private let speechContinueThreshold = 0.0024
     private let preRollChunkLimit = 8
-    private let speechStartHitThreshold = 2
+    private let speechStartHitThreshold = 1
 
     private enum DefaultsKeys {
         static let backend = "dictationBackend"
@@ -224,7 +225,7 @@ final class DictationViewModel: ObservableObject {
         webhookToken = UserDefaults.standard.string(forKey: DefaultsKeys.webhookToken) ?? ""
         streamToWebhook = UserDefaults.standard.bool(forKey: DefaultsKeys.streamToWebhook)
         let savedThoughtPause = UserDefaults.standard.double(forKey: DefaultsKeys.thoughtPauseSeconds)
-        thoughtPauseSeconds = savedThoughtPause > 0 ? savedThoughtPause : 3.5
+        thoughtPauseSeconds = savedThoughtPause > 0 ? max(4.5, min(savedThoughtPause, 8.0)) : 4.5
         sharedStore.pressReturnAfterInsert = pressReturnAfterSend
         publishDictationState()
         configureLifecycleObservers()
@@ -880,7 +881,11 @@ final class DictationViewModel: ObservableObject {
         guard isDeepgramArmed else { return }
 
         updateAudioLevel(chunk.rmsLevel)
-        let isSpeech = chunk.rmsLevel >= speechContinueThreshold
+        updateAmbientNoiseFloor(chunk.rmsLevel)
+
+        let adaptiveStartThreshold = max(speechStartThreshold, ambientNoiseFloor * 2.4)
+        let adaptiveContinueThreshold = max(speechContinueThreshold, ambientNoiseFloor * 1.7)
+        let isSpeech = chunk.rmsLevel >= adaptiveContinueThreshold
 
         if isSpeech {
             lastSpeechDetectedAt = Date()
@@ -891,7 +896,7 @@ final class DictationViewModel: ObservableObject {
 
         if deepgramClient == nil && !isDeepgramOpening && !isDeepgramFinalizing {
             appendPreRoll(chunk.data)
-            if chunk.rmsLevel >= speechStartThreshold && speechHitCount >= speechStartHitThreshold {
+            if chunk.rmsLevel >= adaptiveStartThreshold && speechHitCount >= speechStartHitThreshold {
                 bufferedDeepgramChunks = preRollChunks
                 preRollChunks.removeAll(keepingCapacity: true)
                 listeningPhase = .speechDetected
@@ -927,8 +932,20 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func updateAudioLevel(_ rmsLevel: Double) {
-        let normalized = min(1, max(0, rmsLevel * 28))
+        let normalized = min(1, max(0, rmsLevel * 70))
         audioLevel = audioLevel * 0.72 + normalized * 0.28
+    }
+
+    private func updateAmbientNoiseFloor(_ rmsLevel: Double) {
+        guard deepgramClient == nil,
+              !isDeepgramOpening,
+              !isDeepgramFinalizing,
+              speechHitCount == 0 else {
+            return
+        }
+
+        ambientNoiseFloor = ambientNoiseFloor * 0.96 + rmsLevel * 0.04
+        ambientNoiseFloor = min(0.006, max(0.0008, ambientNoiseFloor))
     }
 
     private func openDeepgramSegment() {
@@ -1055,6 +1072,7 @@ final class DictationViewModel: ObservableObject {
         speechHitCount = 0
         lastSpeechDetectedAt = nil
         audioLevel = 0
+        ambientNoiseFloor = 0.0015
         bufferedDeepgramChunks.removeAll(keepingCapacity: true)
         if !keepPreRoll {
             preRollChunks.removeAll(keepingCapacity: true)

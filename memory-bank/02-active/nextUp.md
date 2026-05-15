@@ -15,23 +15,29 @@ Immediate focus:
 - Real-device validate the new minimal iOS listening surface and
   Deepgram speech-gated flow: quiet armed state should stay calm, speech
   should flip visibly active, EOU should finalize/send once, and quiet
-  time should not continuously stream silence to Deepgram.
+  time should not continuously stream silence to Deepgram. First live
+  tuning pass is shipped: onset flips faster and final submit now waits
+  longer by default, but this should still be tested under normal
+  conversation pacing.
 - Real-device validate the new iOS webhook shape: stable text streams
   during speech, EOU submits only the missing remainder plus suffix, and
   diarized speaker labels appear after the utterance in Mac style.
 - Verify the remote relay receives `append_text` payloads, pastes stream
   deltas immediately, and preserves legacy final-only payload behavior.
 - Add clearer pending/queued/sent/failed state if the current feed still
-  feels too opaque after device testing.
+  feels too opaque after device testing. A first transcript/history sheet
+  exists now; next pass should decide whether it needs search, export, or
+  a clearer per-destination status model.
 - Harden keyboard and webhook delivery semantics around duplicates and
   visible failure.
 - Validate the current Deepgram EOU policy on device. If `speech_final`
   is too aggressive for chat-bound destinations, prefer `UtteranceEnd`,
   explicit stop/finalize, or a longer destination-specific silence
   debounce.
-- Tune issue #5 thresholds after real-device testing: current local
-  speech gate uses RMS start/continue thresholds plus pre-roll; noisy
-  rooms may need adaptive noise-floor calibration.
+- Tune issue #5 thresholds after broader real-device testing: current
+  local speech gate uses adaptive RMS start/continue thresholds plus
+  pre-roll. It worked better in the first iPhone test, but noisy rooms
+  and far-field speech still need validation.
 - Continue research on real-time meeting transcription / agent routing
   tools to decide whether Yappatron stays a dictation layer, becomes a
   Granola-like live conversation transcript, or later needs first-party

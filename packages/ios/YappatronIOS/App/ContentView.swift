@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = DictationViewModel()
     @State private var settingsPresented = false
+    @State private var historyPresented = false
 
     var body: some View {
         NavigationStack {
@@ -68,6 +69,9 @@ struct ContentView: View {
             .sheet(isPresented: $settingsPresented) {
                 SettingsView(viewModel: viewModel)
             }
+            .sheet(isPresented: $historyPresented) {
+                TranscriptHistoryView(viewModel: viewModel)
+            }
             .onAppear {
                 viewModel.autoStartIfNeeded()
             }
@@ -88,6 +92,15 @@ struct ContentView: View {
 
             Spacer()
 
+            if hasOutputHistory {
+                Button {
+                    historyPresented = true
+                } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                }
+                .accessibilityLabel("Transcript history")
+            }
+
             if viewModel.canShareTranscript {
                 ShareLink(item: viewModel.transcript) {
                     Image(systemName: "square.and.arrow.up")
@@ -98,19 +111,16 @@ struct ContentView: View {
         .frame(height: 36)
     }
 
+    private var hasOutputHistory: Bool {
+        viewModel.canShareTranscript || !viewModel.outputEvents.isEmpty || !viewModel.lastDeliveredText.isEmpty
+    }
+
     @ViewBuilder
     private var transcriptHint: some View {
         let text = viewModel.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty && viewModel.listeningPhase != .quiet && viewModel.listeningPhase != .off {
-            Text(text)
-                .font(.body)
-                .lineSpacing(3)
-                .lineLimit(3)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 74)
-                .padding(.horizontal, 12)
-                .textSelection(.enabled)
+            LiveTranscriptPreview(text: text)
+                .frame(maxWidth: .infinity, minHeight: 74, maxHeight: 120)
         } else {
             Color.clear
                 .frame(height: 74)
@@ -180,6 +190,36 @@ struct ContentView: View {
             return .red
         default:
             return .primary
+        }
+    }
+}
+
+private struct LiveTranscriptPreview: View {
+    let text: String
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                Text(text)
+                    .font(.body)
+                    .lineSpacing(3)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+
+                Color.clear
+                    .frame(height: 1)
+                    .id("live-transcript-bottom")
+            }
+            .scrollIndicators(.hidden)
+            .onAppear {
+                proxy.scrollTo("live-transcript-bottom", anchor: .bottom)
+            }
+            .onChange(of: text) { _, _ in
+                proxy.scrollTo("live-transcript-bottom", anchor: .bottom)
+            }
         }
     }
 }
@@ -455,7 +495,7 @@ private struct SettingsView: View {
                     }
                     .font(.subheadline.weight(.semibold))
 
-                    Slider(value: $viewModel.thoughtPauseSeconds, in: 2.0...6.0, step: 0.25)
+                    Slider(value: $viewModel.thoughtPauseSeconds, in: 3.0...8.0, step: 0.25)
                 }
             }
         }
@@ -594,6 +634,128 @@ private struct SettingsView: View {
 
     private func outputEventColor(for status: TranscriptOutputStatus) -> Color {
         switch status {
+        case .queued:
+            return .secondary
+        case .sending, .retrying:
+            return .orange
+        case .sent:
+            return .green
+        case .failed:
+            return .red
+        }
+    }
+}
+
+private struct TranscriptHistoryView: View {
+    @ObservedObject var viewModel: DictationViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    private var currentTranscript: String {
+        viewModel.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if !currentTranscript.isEmpty {
+                        SettingsSection(title: "Current") {
+                            Text(currentTranscript)
+                                .font(.body)
+                                .lineSpacing(4)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    if !viewModel.lastDeliveredText.isEmpty {
+                        SettingsSection(title: "Last Sent") {
+                            Text(viewModel.lastDeliveredText)
+                                .font(.body)
+                                .lineSpacing(4)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    if !viewModel.outputEvents.isEmpty {
+                        SettingsSection(title: "Delivery") {
+                            VStack(alignment: .leading, spacing: 14) {
+                                ForEach(viewModel.outputEvents) { event in
+                                    TranscriptEventRow(event: event)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(20)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Transcript")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct TranscriptEventRow: View {
+    let event: TranscriptOutputEvent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: iconName)
+                    .foregroundStyle(iconColor)
+                    .frame(width: 20)
+
+                Text("\(event.destination.rawValue) \(event.status.rawValue)")
+                    .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                Text(event.timestamp, format: .dateTime.hour().minute().second())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(event.text)
+                .font(.body)
+                .lineSpacing(4)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let detail = event.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var iconName: String {
+        switch event.status {
+        case .queued:
+            return "tray.fill"
+        case .sending:
+            return "paperplane.fill"
+        case .retrying:
+            return "arrow.clockwise"
+        case .sent:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "xmark.octagon.fill"
+        }
+    }
+
+    private var iconColor: Color {
+        switch event.status {
         case .queued:
             return .secondary
         case .sending, .retrying:

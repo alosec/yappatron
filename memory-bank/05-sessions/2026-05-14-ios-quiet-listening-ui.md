@@ -54,6 +54,22 @@ silent armed periods.
 
 ## Notes
 
-The RMS thresholds are intentionally conservative first-pass constants.
-Real-device testing should tune or replace them with adaptive noise-floor
-calibration if noisy rooms false-trigger or quiet speech misses onset.
+Real-device follow-up tuned the first pass:
+
+- Lowered the speech-onset RMS thresholds and added a small adaptive
+  ambient noise floor so normal near-field speech flips out of `Quiet`
+  promptly.
+- Kept live transcription fast, but slowed final submit. The default
+  thought pause is now 4.5s, the slider allows 3.0-8.0s, and
+  Deepgram `UtteranceEnd` no longer gets a short 1s shortcut around the
+  conservative pause policy.
+- Replaced the truncated main-screen transcript preview with a small
+  scrollable live transcript.
+- Added a transcript/history sheet from the top bar so full current,
+  last-sent, and delivery event text can be inspected without opening
+  settings.
+- Stopped using the system pasteboard as the live app/keyboard bridge.
+  The bridge now uses only Yappatron's named pasteboard, which should
+  avoid repeated iOS "allow paste" prompts while dictating.
+- Changed the keyboard live transcript label from single-line ellipsis
+  to a 3-line wrapping preview.

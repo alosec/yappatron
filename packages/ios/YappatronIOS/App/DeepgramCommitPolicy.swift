@@ -21,7 +21,7 @@ struct DeepgramCommitPolicy {
     let utteranceEndGraceMs: UInt64
 
     static func make(mode: Mode, thoughtPauseSeconds: Double) -> DeepgramCommitPolicy {
-        let pauseMs = UInt64(max(2.0, min(thoughtPauseSeconds, 6.0)) * 1_000)
+        let pauseMs = UInt64(max(3.0, min(thoughtPauseSeconds, 8.0)) * 1_000)
 
         switch mode {
         case .responsive:
@@ -36,7 +36,7 @@ struct DeepgramCommitPolicy {
                 mode: mode,
                 silenceDebounceMs: pauseMs,
                 speechFinalGraceMs: pauseMs,
-                utteranceEndGraceMs: min(1_000, pauseMs / 3)
+                utteranceEndGraceMs: pauseMs
             )
         }
     }

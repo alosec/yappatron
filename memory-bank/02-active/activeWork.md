@@ -94,6 +94,11 @@ Known live-use issues to prioritize:
   `Heard you`, `Transcribing`, `Finalizing`, `Sending`) and the Deepgram
   backend locally gates mic buffers before opening a cloud stream.
   Quiet armed time no longer means endless Deepgram silence streaming.
+- Same live-test pass tuned the iOS gate and delivery UX: speech onset
+  now uses lower/adaptive RMS thresholds, final submit uses a slower
+  conservative pause, the main live transcript is scrollable instead of
+  truncated, a top-bar transcript history sheet exposes full sent text,
+  and the app/keyboard bridge no longer polls the system pasteboard.
 - Robustness matters more than new features until the delivery path is
   hard to lose data through.
 
@@ -180,9 +185,11 @@ Native iOS project at `packages/ios/YappatronIOS` installed on the test iPhone v
 Latest UX direction: the first screen should be a minimal ambient
 listening surface, not a setup or diagnostics form. The main view shows
 one stateful listening indicator, a short phase label, a start/stop
-button, and a small destination strip. Settings, credentials, speaker
+button, a small destination strip, and a compact scrollable live
+transcript when speech is active. Settings, credentials, speaker
 renaming, keyboard setup, transcript actions, and delivery diagnostics
-live behind the gear.
+live behind the gear; full current/last-sent/delivery text is available
+from the top-bar transcript button.
 
 Current iOS output model:
 

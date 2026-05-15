@@ -315,12 +315,11 @@ final class SharedTranscriptStore {
     }
 
     private func availablePasteboards(createBridge: Bool) -> [UIPasteboard] {
-        var pasteboards: [UIPasteboard] = []
         if let bridge = UIPasteboard(name: YappatronPasteboard.bridgeName, create: createBridge) {
-            pasteboards.append(bridge)
+            return [bridge]
         }
-        pasteboards.append(.general)
-        return pasteboards
+
+        return []
     }
 
     private static func transcript(from item: [String: Any], role: String) -> SharedTranscript? {

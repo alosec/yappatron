@@ -73,8 +73,8 @@ final class KeyboardViewController: UIInputViewController {
         appLaunchWebView.backgroundColor = .clear
 
         transcriptLabel.font = .preferredFont(forTextStyle: .footnote)
-        transcriptLabel.numberOfLines = 1
-        transcriptLabel.lineBreakMode = .byTruncatingTail
+        transcriptLabel.numberOfLines = 3
+        transcriptLabel.lineBreakMode = .byWordWrapping
         transcriptLabel.textColor = activeTextColor
         transcriptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
