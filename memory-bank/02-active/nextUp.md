@@ -12,6 +12,10 @@ cannot listen, especially FaceTime scenarios where the Mac-side mic
 stream is unavailable.
 
 Immediate focus:
+- Real-device validate the new minimal iOS listening surface and
+  Deepgram speech-gated flow: quiet armed state should stay calm, speech
+  should flip visibly active, EOU should finalize/send once, and quiet
+  time should not continuously stream silence to Deepgram.
 - Real-device validate the new iOS webhook shape: stable text streams
   during speech, EOU submits only the missing remainder plus suffix, and
   diarized speaker labels appear after the utterance in Mac style.
@@ -25,10 +29,9 @@ Immediate focus:
   is too aggressive for chat-bound destinations, prefer `UtteranceEnd`,
   explicit stop/finalize, or a longer destination-specific silence
   debounce.
-- Follow up on issue #5: iOS Deepgram Listening currently streams
-  continuous mic buffers, including silence. Refactor toward local
-  speech/silence gating so armed listening does not burn Deepgram time
-  during silent periods.
+- Tune issue #5 thresholds after real-device testing: current local
+  speech gate uses RMS start/continue thresholds plus pre-roll; noisy
+  rooms may need adaptive noise-floor calibration.
 - Continue research on real-time meeting transcription / agent routing
   tools to decide whether Yappatron stays a dictation layer, becomes a
   Granola-like live conversation transcript, or later needs first-party
@@ -105,6 +108,7 @@ Pairs naturally with the broader "build this into the agent product" plan — on
 - ✓ **RMS-reactive bottom indicator validated** (2026-05-11) — live test confirmed the continuous bar now stays calm on silence and responds correctly to speech amplitude
 - ✓ **iOS keyboard dictation UX pass** (2026-05-11) — URL handoff from keyboard to app, live dictation state bridge with stale-state heartbeat, live delta insertion into active input, checkmark stop/commit, and simplified main app
 - ✓ **iOS webhook append_text refactor** (2026-05-14) — stable text deltas stream during speech, EOU sends a suffix/submit final payload, and diarized labels are suffixes matching the Mac app's append-only model
+- ✓ **iOS quiet/active listening UI + Deepgram speech gate** (2026-05-14) — main screen rebuilt around quiet/active/finalizing/sending phases, with settings moved behind the gear and Deepgram opened only after local speech onset
 - ✓ **Hybrid diarization shipped** (2026-05-08) — Deepgram word-level segmentation + local FluidAudio embedding override, 0.45 cosine threshold, 0.3s min run, race-fix for typing waiting on override task
 - ✓ **`feature/local-segmenter` branched** (2026-05-08) — experimental local-only diarization preserved off-main; FluidAudio segmentation was coarser than Deepgram's word-level boundaries in real testing
 - ✓ **FluidAudio 0.9.1 → 0.14.4** (2026-05-08) — Swift 6.3 toolchain compatibility; updated `LocalSTTProvider.loadModels(from:)` and `BatchProcessor` decoder-state API

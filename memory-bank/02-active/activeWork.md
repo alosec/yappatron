@@ -89,10 +89,11 @@ Known live-use issues to prioritize:
   transcript text streams forward during speech, then EOU sends only the
   missing remainder plus a suffix/submit event. Diarized attribution is
   a suffix line instead of a prefix.
-- Separate issue #5 tracks a significant follow-up: the current iOS
-  Deepgram listening state streams mic buffers continuously, including
-  silence. The Mac app gates/cuts speech locally before sending audio;
-  iOS needs the same concept later.
+- Issue #5 changed from follow-up to shipped implementation scope on
+  2026-05-14: the iOS app now has product-facing phases (`Quiet`,
+  `Heard you`, `Transcribing`, `Finalizing`, `Sending`) and the Deepgram
+  backend locally gates mic buffers before opening a cloud stream.
+  Quiet armed time no longer means endless Deepgram silence streaming.
 - Robustness matters more than new features until the delivery path is
   hard to lose data through.
 
@@ -176,12 +177,23 @@ Validated easy-mode (quiet 1:1) cleanly. Hard-mode (3+ speakers, ambient noise) 
 
 Native iOS project at `packages/ios/YappatronIOS` installed on the test iPhone via free Personal Team signing.
 
-Latest UX direction: "Full Send" should be the primary mode. The app screen is not a hidden setup flow; it should show the active outputs, a big start/stop control, live transcript text, and a delivery feed.
+Latest UX direction: the first screen should be a minimal ambient
+listening surface, not a setup or diagnostics form. The main view shows
+one stateful listening indicator, a short phase label, a start/stop
+button, and a small destination strip. Settings, credentials, speaker
+renaming, keyboard setup, transcript actions, and delivery diagnostics
+live behind the gear.
 
 Current iOS output model:
 
 - Local mode (Apple Speech) is a first-class source. It emits finalized chunks using a pause/debounce boundary, restarts recognition tasks across Apple Speech task endings, and can deliver those chunks to outputs.
-- Deepgram mode still supports diarized runs and speaker naming. iOS delivery is now utterance-boundary debounced instead of firing every Deepgram `is_final` fragment. Stable Deepgram final fragments can stream to the webhook as append-only deltas during speech; EOU sends a final append payload with the Mac-style speaker suffix and submit newline.
+- Deepgram mode still supports diarized runs and speaker naming. iOS now
+  arms the microphone locally, tracks RMS speech activity, buffers a
+  small pre-roll, opens Deepgram only after local speech onset, and
+  finalizes/disconnects after the configured thought pause. Stable
+  Deepgram final fragments stream to the webhook as append-only deltas
+  during speech; EOU sends a final append payload with the Mac-style
+  speaker suffix and submit newline.
 - Outputs are configurable independently of the engine:
   - Webhook POST with optional bearer token.
   - Yappatron keyboard auto-insert via a queued tagged pasteboard bridge.

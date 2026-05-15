@@ -42,6 +42,59 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    enum ListeningPhase: Equatable {
+        case off
+        case connecting
+        case quiet
+        case speechDetected
+        case transcribing
+        case finalizing
+        case sending
+        case attention(String)
+
+        var title: String {
+            switch self {
+            case .off:
+                return "Off"
+            case .connecting:
+                return "Connecting"
+            case .quiet:
+                return "Quiet"
+            case .speechDetected:
+                return "Heard you"
+            case .transcribing:
+                return "Transcribing"
+            case .finalizing:
+                return "Finalizing"
+            case .sending:
+                return "Sending"
+            case .attention:
+                return "Needs attention"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .off:
+                return "Tap to arm"
+            case .connecting:
+                return "Preparing the mic"
+            case .quiet:
+                return "Waiting for speech"
+            case .speechDetected:
+                return "Opening the stream"
+            case .transcribing:
+                return "Speech detected"
+            case .finalizing:
+                return "Finding the end"
+            case .sending:
+                return "Delivering"
+            case .attention(let message):
+                return message
+            }
+        }
+    }
+
     @Published var backend: DictationBackend {
         didSet {
             defaults.set(backend.rawValue, forKey: DefaultsKeys.backend)
@@ -50,6 +103,8 @@ final class DictationViewModel: ObservableObject {
     @Published var apiKey: String
     @Published private(set) var transcript = ""
     @Published private(set) var status: Status = .idle
+    @Published private(set) var listeningPhase: ListeningPhase = .off
+    @Published private(set) var audioLevel: Double = 0
     @Published var autoInsertOnKeyboardOpen: Bool {
         didSet {
             sharedStore.autoInsertOnKeyboardOpen = autoInsertOnKeyboardOpen
@@ -130,7 +185,23 @@ final class DictationViewModel: ObservableObject {
     private var outputSequence = 0
     private var lastWebhookStreamedTranscript = ""
     private var webhookStreamSequence = 0
+    private var deepgramTranscriptPrefix = ""
+    private var deepgramConnectTask: Task<Void, Never>?
+    private var deepgramFinishTask: Task<Void, Never>?
+    private var phaseResetTask: Task<Void, Never>?
+    private var preRollChunks: [Data] = []
+    private var bufferedDeepgramChunks: [Data] = []
+    private var speechHitCount = 0
+    private var lastSpeechDetectedAt: Date?
+    private var isDeepgramArmed = false
+    private var isDeepgramOpening = false
+    private var isDeepgramFinalizing = false
     private var didAutoStart = false
+
+    private let speechStartThreshold = 0.012
+    private let speechContinueThreshold = 0.007
+    private let preRollChunkLimit = 8
+    private let speechStartHitThreshold = 2
 
     private enum DefaultsKeys {
         static let backend = "dictationBackend"
@@ -342,6 +413,8 @@ final class DictationViewModel: ObservableObject {
             outputSequence = 0
             webhookStreamSequence = 0
             lastWebhookStreamedTranscript = ""
+            deepgramTranscriptPrefix = ""
+            resetSpeechGate()
             lastDeliveredLocalTranscript = ""
             lastDeliveredText = ""
             deliveredUtteranceCount = 0
@@ -350,6 +423,7 @@ final class DictationViewModel: ObservableObject {
             lastWebhookError = nil
 
             status = .connecting
+            listeningPhase = .connecting
             UIApplication.shared.isIdleTimerDisabled = true
             publishDictationState()
             startKeyboardCommandPolling()
@@ -362,10 +436,14 @@ final class DictationViewModel: ObservableObject {
             }
 
             status = .listening
+            if listeningPhase == .connecting {
+                listeningPhase = .quiet
+            }
             publishDictationState()
         } catch {
             await cleanUpRecording()
             status = .failed(error.localizedDescription)
+            listeningPhase = .attention(error.localizedDescription)
             publishDictationState()
         }
     }
@@ -376,6 +454,7 @@ final class DictationViewModel: ObservableObject {
         }
 
         status = .finishing
+        listeningPhase = .finalizing
         UIApplication.shared.isIdleTimerDisabled = false
         endRecordingBackgroundTask()
         publishDictationState()
@@ -387,11 +466,14 @@ final class DictationViewModel: ObservableObject {
             deliverLocalTranscriptIfNeeded(finalText, force: true)
             self.localRecognizer = nil
             status = .idle
+            listeningPhase = .off
             publishDictationState()
             stopKeyboardCommandPolling()
             return
         }
 
+        isDeepgramArmed = false
+        deepgramConnectTask?.cancel()
         audioCapture.stop()
         audioContinuation?.finish()
         audioContinuation = nil
@@ -399,14 +481,21 @@ final class DictationViewModel: ObservableObject {
         try? await Task.sleep(nanoseconds: 250_000_000)
         await audioSendTask?.value
 
-        let finalText = (try? await deepgramClient?.finish()) ?? transcript
-        receiveTranscript(finalText, streamWebhookUpdate: true)
+        if let deepgramClient {
+            let finalText = (try? await deepgramClient.finish()) ?? ""
+            receiveDeepgramTranscript(finalText, streamWebhookUpdate: true)
+            await deepgramClient.disconnect()
+        }
+        await deepgramFinishTask?.value
 
         audioSendTask = nil
-        await deepgramClient?.disconnect()
         deepgramClient = nil
+        isDeepgramOpening = false
+        isDeepgramFinalizing = false
+        resetSpeechGate()
 
         status = .idle
+        listeningPhase = .off
         publishDictationState()
         stopKeyboardCommandPolling()
     }
@@ -436,10 +525,31 @@ final class DictationViewModel: ObservableObject {
     private func receiveTranscript(_ text: String, streamWebhookUpdate: Bool = false) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = trimmedText
+        if isRecording,
+           !trimmedText.isEmpty,
+           listeningPhase != .finalizing,
+           listeningPhase != .sending {
+            listeningPhase = .transcribing
+        }
         if streamWebhookUpdate {
             streamWebhookTranscriptIfNeeded(trimmedText)
         }
         publishDictationState()
+    }
+
+    private func receiveDeepgramTranscript(_ text: String, streamWebhookUpdate: Bool = false) {
+        receiveTranscript(fullDeepgramTranscript(for: text), streamWebhookUpdate: streamWebhookUpdate)
+    }
+
+    private func fullDeepgramTranscript(for segmentTranscript: String) -> String {
+        let prefix = deepgramTranscriptPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        let segment = segmentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if prefix.isEmpty { return segment }
+        if segment.isEmpty { return prefix }
+        if prefix == segment || prefix.hasSuffix(segment) { return prefix }
+
+        return "\(prefix) \(segment)"
     }
 
     private var hasWebhookEndpoint: Bool {
@@ -561,7 +671,9 @@ final class DictationViewModel: ObservableObject {
             )
         }
         let suffix = speakerSuffixText(for: cleanedRuns)
-        let appendText = finalWebhookAppendText(fullTranscript: turn.fullTranscript, suffix: suffix)
+        let fullTranscript = fullDeepgramTranscript(for: turn.fullTranscript)
+        let appendText = finalWebhookAppendText(fullTranscript: fullTranscript, suffix: suffix)
+        deepgramTranscriptPrefix = fullTranscript
 
         let utterance = DiarizedUtterance(
             event_type: "utterance_end",
@@ -647,6 +759,7 @@ final class DictationViewModel: ObservableObject {
 
         try await recognizer.start()
         localRecognizer = recognizer
+        listeningPhase = .quiet
     }
 
     private func scheduleLocalDelivery(for text: String, isFinal: Bool) {
@@ -726,6 +839,8 @@ final class DictationViewModel: ObservableObject {
 
         deliveredUtteranceCount += 1
         lastDeliveredText = utterance.formatted_text ?? utterance.text
+        listeningPhase = .sending
+        scheduleQuietPhaseReset(after: 0.9)
         prependOutputEvents(events)
     }
 
@@ -751,10 +866,109 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func startDeepgramRecording() async throws {
+        isDeepgramArmed = true
+        listeningPhase = .quiet
+
+        try await audioCapture.start { [weak self] chunk in
+            Task { @MainActor in
+                self?.handleDeepgramCapturedChunk(chunk)
+            }
+        }
+    }
+
+    private func handleDeepgramCapturedChunk(_ chunk: CapturedAudioChunk) {
+        guard isDeepgramArmed else { return }
+
+        updateAudioLevel(chunk.rmsLevel)
+        let isSpeech = chunk.rmsLevel >= speechContinueThreshold
+
+        if isSpeech {
+            lastSpeechDetectedAt = Date()
+            speechHitCount += 1
+        } else {
+            speechHitCount = max(0, speechHitCount - 1)
+        }
+
+        if deepgramClient == nil && !isDeepgramOpening && !isDeepgramFinalizing {
+            appendPreRoll(chunk.data)
+            if chunk.rmsLevel >= speechStartThreshold && speechHitCount >= speechStartHitThreshold {
+                bufferedDeepgramChunks = preRollChunks
+                preRollChunks.removeAll(keepingCapacity: true)
+                listeningPhase = .speechDetected
+                openDeepgramSegment()
+            }
+            return
+        }
+
+        if isDeepgramOpening {
+            bufferedDeepgramChunks.append(chunk.data)
+            return
+        }
+
+        if isDeepgramFinalizing {
+            appendPreRoll(chunk.data)
+            return
+        }
+
+        audioContinuation?.yield(chunk.data)
+        if isSpeech {
+            listeningPhase = .transcribing
+        } else if let lastSpeechDetectedAt,
+                  Date().timeIntervalSince(lastSpeechDetectedAt) >= thoughtPauseSeconds {
+            finishDeepgramSegment()
+        }
+    }
+
+    private func appendPreRoll(_ data: Data) {
+        preRollChunks.append(data)
+        if preRollChunks.count > preRollChunkLimit {
+            preRollChunks.removeFirst(preRollChunks.count - preRollChunkLimit)
+        }
+    }
+
+    private func updateAudioLevel(_ rmsLevel: Double) {
+        let normalized = min(1, max(0, rmsLevel * 28))
+        audioLevel = audioLevel * 0.72 + normalized * 0.28
+    }
+
+    private func openDeepgramSegment() {
+        guard !isDeepgramOpening, deepgramClient == nil, isDeepgramArmed else {
+            return
+        }
+
+        isDeepgramOpening = true
+        deepgramConnectTask?.cancel()
+        deepgramConnectTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let client = await MainActor.run { self.makeDeepgramClient() }
+                try await client.connect()
+
+                await MainActor.run {
+                    guard self.isDeepgramArmed, self.status == .listening else {
+                        Task { await client.disconnect() }
+                        self.isDeepgramOpening = false
+                        return
+                    }
+
+                    self.installConnectedDeepgramClient(client)
+                }
+            } catch {
+                await MainActor.run {
+                    self.isDeepgramOpening = false
+                    self.bufferedDeepgramChunks.removeAll(keepingCapacity: true)
+                }
+                await self.failRecording(error.localizedDescription)
+            }
+        }
+    }
+
+    private func makeDeepgramClient() -> DeepgramStreamingClient {
         let client = DeepgramStreamingClient(apiKey: apiKey, commitPolicy: deepgramCommitPolicy)
         client.onTranscript = { [weak self] text, isFinal in
             Task { @MainActor in
-                self?.receiveTranscript(text, streamWebhookUpdate: isFinal)
+                self?.receiveDeepgramTranscript(text, streamWebhookUpdate: isFinal)
             }
         }
         client.onDiarizedFinal = { [weak self] turn in
@@ -767,9 +981,13 @@ final class DictationViewModel: ObservableObject {
                 await self?.failRecording(message)
             }
         }
+        return client
+    }
 
-        try await client.connect()
+    private func installConnectedDeepgramClient(_ client: DeepgramStreamingClient) {
         deepgramClient = client
+        isDeepgramOpening = false
+        isDeepgramFinalizing = false
 
         let stream = AsyncStream<Data>.makeStream()
         audioContinuation = stream.continuation
@@ -789,9 +1007,72 @@ final class DictationViewModel: ObservableObject {
             }
         }
 
-        let audioContinuation = stream.continuation
-        try await audioCapture.start { data in
-            audioContinuation.yield(data)
+        for data in bufferedDeepgramChunks {
+            stream.continuation.yield(data)
+        }
+        bufferedDeepgramChunks.removeAll(keepingCapacity: true)
+        listeningPhase = .transcribing
+    }
+
+    private func finishDeepgramSegment() {
+        guard !isDeepgramFinalizing,
+              let client = deepgramClient else {
+            return
+        }
+
+        listeningPhase = .finalizing
+        isDeepgramFinalizing = true
+        audioContinuation?.finish()
+        audioContinuation = nil
+        let sendTask = audioSendTask
+        audioSendTask = nil
+        deepgramClient = nil
+
+        deepgramFinishTask?.cancel()
+        deepgramFinishTask = Task { [weak self, client, sendTask] in
+            await sendTask?.value
+            let finalText = (try? await client.finish()) ?? ""
+            await client.disconnect()
+
+            await MainActor.run {
+                guard let self else { return }
+                if !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.receiveDeepgramTranscript(finalText, streamWebhookUpdate: true)
+                }
+                self.isDeepgramFinalizing = false
+                self.bufferedDeepgramChunks.removeAll(keepingCapacity: true)
+                self.resetSpeechGate(keepPreRoll: true)
+                if self.isRecording {
+                    self.listeningPhase = .quiet
+                } else {
+                    self.listeningPhase = .off
+                }
+            }
+        }
+    }
+
+    private func resetSpeechGate(keepPreRoll: Bool = false) {
+        speechHitCount = 0
+        lastSpeechDetectedAt = nil
+        audioLevel = 0
+        bufferedDeepgramChunks.removeAll(keepingCapacity: true)
+        if !keepPreRoll {
+            preRollChunks.removeAll(keepingCapacity: true)
+        }
+    }
+
+    private func scheduleQuietPhaseReset(after seconds: Double) {
+        phaseResetTask?.cancel()
+        phaseResetTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            await MainActor.run {
+                guard let self,
+                      self.isRecording,
+                      self.listeningPhase == .sending else {
+                    return
+                }
+                self.listeningPhase = .quiet
+            }
         }
     }
 
@@ -801,6 +1082,13 @@ final class DictationViewModel: ObservableObject {
         stopKeyboardCommandPolling()
         localDeliveryTask?.cancel()
         localDeliveryTask = nil
+        phaseResetTask?.cancel()
+        phaseResetTask = nil
+        deepgramConnectTask?.cancel()
+        deepgramConnectTask = nil
+        deepgramFinishTask?.cancel()
+        deepgramFinishTask = nil
+        isDeepgramArmed = false
 
         if let localRecognizer {
             _ = await localRecognizer.stop()
@@ -814,12 +1102,18 @@ final class DictationViewModel: ObservableObject {
         audioSendTask = nil
         await deepgramClient?.disconnect()
         deepgramClient = nil
+        isDeepgramOpening = false
+        isDeepgramFinalizing = false
+        resetSpeechGate()
+        listeningPhase = .off
         publishDictationState(isRecordingOverride: false)
     }
 
     private func failRecording(_ message: String) async {
         status = .failed(message)
+        listeningPhase = .attention(message)
         await cleanUpRecording()
+        listeningPhase = .attention(message)
         publishDictationState(isRecordingOverride: false)
     }
 

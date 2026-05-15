@@ -1,6 +1,11 @@
 import AVFoundation
 import Foundation
 
+struct CapturedAudioChunk {
+    let data: Data
+    let rmsLevel: Double
+}
+
 final class AudioCaptureManager {
     enum CaptureError: LocalizedError {
         case microphonePermissionDenied
@@ -33,7 +38,7 @@ final class AudioCaptureManager {
         }
     }
 
-    func start(onChunk: @escaping (Data) -> Void) async throws {
+    func start(onChunk: @escaping (CapturedAudioChunk) -> Void) async throws {
         guard await requestPermission() else {
             throw CaptureError.microphonePermissionDenied
         }
@@ -77,7 +82,10 @@ final class AudioCaptureManager {
                 return
             }
 
-            onChunk(data)
+            onChunk(CapturedAudioChunk(
+                data: data,
+                rmsLevel: Self.rmsLevel(from: convertedBuffer)
+            ))
         }
 
         audioEngine.prepare()
@@ -134,5 +142,26 @@ final class AudioCaptureManager {
         }
 
         return data
+    }
+
+    private static func rmsLevel(from buffer: AVAudioPCMBuffer) -> Double {
+        guard let channelData = buffer.floatChannelData else {
+            return 0
+        }
+
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0 else {
+            return 0
+        }
+
+        let samples = channelData[0]
+        var sum: Double = 0
+
+        for index in 0..<frameLength {
+            let sample = Double(samples[index])
+            sum += sample * sample
+        }
+
+        return sqrt(sum / Double(frameLength))
     }
 }
