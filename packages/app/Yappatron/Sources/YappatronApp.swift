@@ -30,6 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var inputSimulator: InputSimulator!
     var batchProcessor: BatchProcessor?
     var refinementManager: TextRefinementManager?
+    let webhookOutbox = WebhookOutbox()
 
     // Hotkeys
     var togglePauseHotKey: HotKey?
@@ -51,6 +52,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var inputFocusLockAlertVisible = false
     var focusObservationTimer: Timer?
     var lastInputFocusLockShortcutAt = Date.distantPast
+    var webhookSessionID = UUID().uuidString
+    var webhookSequence = 0
+    var lastWebhookStatus = "Idle"
 
     // Settings
     var pressEnterAfterSpeech: Bool {
@@ -61,6 +65,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var enableDualPassRefinement: Bool {
         get { UserDefaults.standard.bool(forKey: "enableDualPassRefinement") }
         set { UserDefaults.standard.set(newValue, forKey: "enableDualPassRefinement") }
+    }
+
+    var webhookOutputEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "webhookOutputEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "webhookOutputEnabled") }
+    }
+
+    var webhookOutputURL: String {
+        get {
+            let stored = UserDefaults.standard.string(forKey: "webhookOutputURL") ?? ""
+            return stored.isEmpty ? "http://127.0.0.1:3002/input/yappatron" : stored
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "webhookOutputURL") }
     }
 
     var dictationMode: DictationMode {
@@ -115,8 +132,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 }
 
                 refinementManager?.applyRefinementTextUpdate = { [weak self] streamedText, refinedText in
-                    self?.applyTextUpdateToTypingDestination(from: streamedText, to: refinedText, logRejection: true) ?? false
+                    if self?.webhookOutputEnabled == true {
+                        return true
+                    }
+                    return self?.applyTextUpdateToTypingDestination(from: streamedText, to: refinedText, logRejection: true) ?? false
                 }
+            }
+        }
+
+        webhookOutbox.onEvent = { [weak self] event in
+            Task { @MainActor in
+                self?.handleWebhookEvent(event)
             }
         }
 
@@ -158,6 +184,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         Task { @MainActor in
             focusObservationTimer?.invalidate()
             unregisterInputFocusLockShortcut()
+            webhookOutbox.cancelAll()
             engine.cleanup()
         }
     }
@@ -199,6 +226,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         currentTypedText = ""
+    }
+
+    func sendFinalUtteranceToWebhook(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        webhookSequence += 1
+        let payload = TranscriptWebhookPayload(
+            text: trimmed,
+            sessionID: webhookSessionID,
+            sequence: webhookSequence
+        )
+        lastWebhookStatus = "Queued"
+        webhookOutbox.enqueue(payload, to: webhookOutputURL)
+        updateStatusIcon()
+    }
+
+    func handleWebhookEvent(_ event: WebhookDeliveryEvent) {
+        lastWebhookStatus = event.status.rawValue
+        if let detail = event.detail {
+            NSLog("[Yappatron] Webhook \(event.status.rawValue): \(detail)")
+        } else {
+            NSLog("[Yappatron] Webhook \(event.status.rawValue)")
+        }
+        updateStatusIcon()
     }
 
     private func prepareTypingDestination(logRejection: Bool) -> TypingDestination? {
@@ -315,6 +367,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if enableDualPassRefinement && !STTBackend.current.returnsPunctuatedText {
             engine.onUtteranceComplete = { [weak self] audioSamples, streamedText in
                 Task { @MainActor in
+                    guard self?.webhookOutputEnabled != true else { return }
                     self?.refinementManager?.refineTranscription(
                         audioSamples: audioSamples,
                         streamedText: streamedText
@@ -374,6 +427,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     /// For cloud backends: only allows backspacing into interim (tentative) text, never into locked finals
     func handlePartialTranscription(_ partial: String) {
         guard !isPaused else { return }
+        guard !webhookOutputEnabled else { return }
 
         if STTBackend.current.returnsPunctuatedText {
             // Cloud backend: only type is_final segments (lockedTextLength matches).
@@ -404,6 +458,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func handleFinalTranscription(_ text: String) {
         guard !isPaused else { return }
 
+        if webhookOutputEnabled {
+            lockedTextLength = 0
+            currentTypedText = ""
+            sendFinalUtteranceToWebhook(text)
+            return
+        }
+
         withTypingDestination(logRejection: true) {
             // Correct any interim drift — finals are authoritative
             if currentTypedText != text {
@@ -427,6 +488,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     /// Called after batch refinement completes (dual-pass mode only)
     func handleRefinementComplete(_ refinedText: String) {
+        if webhookOutputEnabled {
+            currentTypedText = ""
+            sendFinalUtteranceToWebhook(refinedText)
+            return
+        }
+
         withTypingDestination(logRejection: true) {
             // Update tracking to reflect refined text
             currentTypedText = refinedText
@@ -541,6 +608,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let enterItem = NSMenuItem(title: "Press Enter After Speech", action: #selector(toggleEnterAction), keyEquivalent: "")
         enterItem.state = pressEnterAfterSpeech ? .on : .off
         menu.addItem(enterItem)
+
+        let webhookItem = NSMenuItem(title: "Send Final Utterances to Webhook", action: #selector(toggleWebhookOutput), keyEquivalent: "")
+        webhookItem.state = webhookOutputEnabled ? .on : .off
+        menu.addItem(webhookItem)
+
+        let webhookURLItem = NSMenuItem(title: "Configure Webhook URL...", action: #selector(configureWebhookOutputURL), keyEquivalent: "")
+        menu.addItem(webhookURLItem)
+
+        if webhookOutputEnabled {
+            let webhookStatusItem = NSMenuItem(title: "Webhook: \(lastWebhookStatus)", action: nil, keyEquivalent: "")
+            webhookStatusItem.isEnabled = false
+            menu.addItem(webhookStatusItem)
+        }
 
         // Capture system audio (FaceTime, Zoom, browser, etc.) via ScreenCaptureKit
         let systemAudioItem = NSMenuItem(title: "Capture System Audio (Experimental)", action: #selector(toggleSystemAudioCapture), keyEquivalent: "")
@@ -959,6 +1039,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         pressEnterAfterSpeech.toggle()
     }
 
+    @objc func toggleWebhookOutput() {
+        webhookOutputEnabled.toggle()
+        currentTypedText = ""
+        lockedTextLength = 0
+        lastWebhookStatus = webhookOutputEnabled ? "Enabled" : "Idle"
+        updateStatusIcon()
+    }
+
+    @objc func configureWebhookOutputURL() {
+        let alert = NSAlert()
+        alert.messageText = "Webhook Output URL"
+        alert.informativeText = "Final utterances will be POSTed as JSON to this URL."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 440, height: 24))
+        input.stringValue = webhookOutputURL
+        alert.accessoryView = input
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let trimmed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            webhookOutputURL = trimmed
+            lastWebhookStatus = "URL saved"
+            updateStatusIcon()
+        }
+    }
+
     @objc func toggleInputFocusLockAction() {
         if lockedInputFocusTarget != nil {
             unlockInputFocus()
@@ -1250,6 +1359,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
 struct SettingsView: View {
     @State private var pushToTalkShortcut = HotKeyPreferences.displayString(for: HotKeyPreferences.pushToTalkCombo)
+    @AppStorage("webhookOutputEnabled") private var webhookOutputEnabled = false
+    @AppStorage("webhookOutputURL") private var webhookOutputURL = ""
 
     var body: some View {
         Form {
@@ -1287,8 +1398,16 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
+
+            Section("Webhook Output") {
+                Toggle("Send Final Utterances", isOn: $webhookOutputEnabled)
+                TextField("URL", text: $webhookOutputURL)
+                Text("Default: http://127.0.0.1:3002/input/yappatron")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 390, height: 400)
+        .frame(width: 440, height: 500)
     }
 }
