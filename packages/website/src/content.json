@@ -1,32 +1,33 @@
 {
   "name": "yappatron",
   "tagline": "just yap.",
-  "description": "voice dictation for mac with always-on listening and configurable push-to-talk.",
+  "description": "voice dictation for mac with OpenAI Realtime, local mode, always-on listening, and configurable push-to-talk.",
   "badges": [
     { "label": "macOS", "icon": "apple" },
+    { "label": "openai realtime", "icon": "spark" },
     { "label": "cloud + local", "icon": "shield" },
     { "label": "free", "icon": "heart" }
   ],
   "features": [
     {
-      "title": "streaming text",
-      "body": "Text flows in as you speak. Deepgram Nova-3 for cloud accuracy, or fully local with Parakeet."
+      "title": "instant streaming text",
+      "body": "OpenAI Realtime turns your voice into text as you speak. It feels less like dictation software and more like a live voice keyboard."
     },
     {
       "title": "built for vibe coding",
-      "body": "Talk to your AI. Describe what you want. Auto-enters when you pause so Claude responds instantly."
+      "body": "Talk to your AI. Describe what you want. A humane end-of-utterance pause sends the thought when you actually stop."
     },
     {
-      "title": "best-in-class accuracy",
-      "body": "Deepgram Nova-3 with punctuation, capitalization, and smart formatting. Sub-300ms latency."
+      "title": "modern cloud stt",
+      "body": "OpenAI Realtime with gpt-realtime-whisper is the default fast path. Deepgram Nova-3 is still available when you want that backend."
     },
     {
       "title": "knows who's talking",
-      "body": "Enroll your voice once. Yappatron labels every line so two-person conversations stream as [Alex] / [Mom] right into your editor. Hybrid Deepgram + local voiceprint matching."
+      "body": "On the Deepgram backend, enroll your voice once and Yappatron can label two-person conversations with hybrid cloud + local voiceprint matching."
     },
     {
       "title": "local or cloud — your call",
-      "body": "Switch between Deepgram cloud STT and fully local Parakeet from the menu bar. Your words, your rules."
+      "body": "Switch between OpenAI Realtime, Deepgram cloud STT, and fully local Parakeet from the menu bar. Your words, your rules."
     }
   ],
   "steps": [
@@ -39,7 +40,8 @@
     "macOS 14+ (Sonoma)",
     "Apple Silicon (M1/M2/M3/M4)",
     "Microphone permission",
-    "Accessibility permission"
+    "Accessibility permission",
+    "Internet + API key for cloud STT"
   ],
   "terminal": [
     { "type": "prompt", "text": "> claude: " },
