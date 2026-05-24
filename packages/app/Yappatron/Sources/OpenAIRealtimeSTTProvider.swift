@@ -28,7 +28,7 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
     private var finalizeTimeoutTask: Task<Void, Never>?
     private var sessionReadyContinuation: CheckedContinuation<Bool, Never>?
     private var isSessionConfigured = false
-    private let eouDebounceMs: UInt64 = 1250
+    private let eouDebounceMs: UInt64 = 1500
     private let speechRMSFloor: Float = 0.0045
     private var lastError: String?
 
