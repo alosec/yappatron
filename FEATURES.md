@@ -1,6 +1,6 @@
 # Yappatron Features
 
-**Current Version:** Swift 1.1 (2026-03-24)
+**Current Version:** Swift 1.2 (2026-05-24)
 
 ## Overview
 
@@ -8,7 +8,23 @@ Yappatron is a voice dictation app for macOS with swappable cloud and local STT 
 
 ## Core Features
 
-### ☁️ Cloud STT — Deepgram Nova-3 (Recommended)
+### ☁️ Cloud STT — OpenAI Realtime (`gpt-realtime-whisper`)
+
+Real-time streaming transcription via OpenAI's Realtime API.
+
+- **Latest realtime STT model**: Uses OpenAI `gpt-realtime-whisper`
+- **Low-latency transcript deltas**: Text appears while audio is still streaming
+- **Punctuation & capitalization**: Built-in formatting (no dual-pass needed)
+- **24kHz PCM input**: Yappatron resamples mic audio for the Realtime transcription session
+
+**Technical Details:**
+- WebSocket streaming to `wss://api.openai.com/v1/realtime`
+- Realtime transcription session with `type: "transcription"`
+- Model: `gpt-realtime-whisper`
+- 24kHz mono PCM audio encoding
+- API key stored in app preferences
+
+### ☁️ Cloud STT — Deepgram Nova-3
 
 Real-time streaming transcription via Deepgram's WebSocket API.
 
@@ -44,9 +60,9 @@ Fully local, privacy-first transcription via Apple Neural Engine.
 
 Switch between cloud and local STT via the menu bar:
 - Right-click menu bar → **STT Backend** → choose provider
-- API keys managed via **Set Deepgram API Key...** menu item
+- API keys managed via **Set Deepgram API Key...** and **Set OpenAI API Key...** menu items
 - Backend selection persists across sessions
-- Requires app restart when switching
+- Yappatron automatically restarts after switching
 
 ### ✨ Dual-Pass Refinement (Local Mode Only, Optional)
 
@@ -104,7 +120,7 @@ Only available when using Local (Parakeet) backend — cloud backends already re
 ### 🔒 Privacy Options
 
 - **Local mode**: 100% on-device, nothing leaves your machine
-- **Cloud mode**: Audio streamed to Deepgram (see their privacy policy)
+- **Cloud mode**: Audio streamed to the selected cloud provider
 - **No telemetry**: Zero data collection by Yappatron itself
 - **Your choice**: Switch between local and cloud anytime
 
@@ -117,12 +133,12 @@ Right-click the orb to access:
 - **Configure Push-to-Talk Shortcut...** - Choose the global shortcut to hold while dictating
 - ✓ Press Enter After Speech - Toggle hands-free operation
 - ✓ Dual-Pass Refinement (local mode only) - Toggle enhanced accuracy
-- **STT Backend** submenu - Switch between Deepgram / Local (Parakeet)
-- **Set Deepgram API Key...** - Configure cloud STT credentials
+- **STT Backend** submenu - Switch between OpenAI Realtime / Deepgram / Local (Parakeet)
+- **Set Deepgram API Key...** / **Set OpenAI API Key...** - Configure cloud STT credentials
 - Orb Style Selector - Choose animation style
 - Quit - Exit application
 
-**Note**: Backend and dual-pass toggles require app restart to take effect.
+**Note**: Backend switches restart automatically. Dual-pass toggles still require an app restart to take effect.
 
 ## System Requirements
 
@@ -130,9 +146,14 @@ Right-click the orb to access:
 - Apple Silicon (M1/M2/M3/M4) recommended for best performance
 - Microphone access permission
 - Accessibility permission (for typing simulation)
-- Internet connection (for Deepgram cloud STT; not needed for local mode)
+- Internet connection (for cloud STT; not needed for local mode)
 
 ## Models & Performance
+
+### Cloud: OpenAI Realtime (`gpt-realtime-whisper`)
+- **Latency**: Low-latency streaming transcript deltas
+- **Features**: Punctuation, capitalization, tunable realtime transcription delay
+- **Input**: 24kHz mono PCM over WebSocket
 
 ### Cloud: Deepgram Nova-3
 - **Latency**: Sub-300ms
@@ -177,13 +198,14 @@ cd ~/Workspace/yappatron
 - SwiftUI for UI components
 - Pluggable STT backends via `STTProvider` protocol
 - FluidAudio for local ASR (Apache 2.0 license)
-- Native `URLSessionWebSocketTask` for Deepgram streaming
+- Native `URLSessionWebSocketTask` for OpenAI Realtime and Deepgram streaming
 
 **Audio Pipeline:**
 ```
 Microphone → AVAudioEngine → 16kHz Resample → AudioBufferQueue
     ↓
 STTProvider (swappable backend)
+    ├── OpenAIRealtimeSTTProvider: WebSocket → gpt-realtime-whisper (cloud)
     ├── DeepgramSTTProvider: WebSocket → Deepgram Nova-3 (cloud)
     └── LocalSTTProvider: StreamingEouAsrManager → Parakeet EOU 120M (local)
     ↓
@@ -224,9 +246,15 @@ The model understands complete thoughts:
 - **No custom vocabulary**: Not yet ported from Python prototype
 - **No speaker diarization**: Single-user dictation only
 - **English-focused**: Primary testing in English (Deepgram supports 60+ languages)
-- **Backend switch requires restart**: Cannot hot-swap between cloud/local yet
+- **Backend switch restarts the app**: Cloud/local hot-swap is not live yet, so Yappatron relaunches after a backend change
 
 ## Recent Changes
+
+### OpenAI Realtime STT Backend (2026-05-24)
+- Added OpenAI Realtime as a cloud STT backend
+- Uses `gpt-realtime-whisper` for realtime transcription
+- Resamples Yappatron's 16kHz mic buffers to 24kHz PCM for the Realtime API
+- Added OpenAI API key management via menu bar
 
 ### Cloud STT Backend (2026-03-24)
 - Added Deepgram Nova-3 as a cloud STT backend

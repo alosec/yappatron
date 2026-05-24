@@ -704,6 +704,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
         backendMenu.addItem(apiKeyItem)
 
+        let openAIKeyItem = NSMenuItem(title: "Set OpenAI API Key...", action: #selector(setOpenAIAPIKey), keyEquivalent: "")
+        let hasOpenAIKey = APIKeyStore.get(for: .openAIRealtime) != nil
+        if hasOpenAIKey {
+            openAIKeyItem.title = "Update OpenAI API Key..."
+        }
+        backendMenu.addItem(openAIKeyItem)
+
         backendItem.submenu = backendMenu
         menu.addItem(backendItem)
 
@@ -1262,9 +1269,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         guard let rawValue = sender.representedObject as? String,
               let backend = STTBackend(rawValue: rawValue) else { return }
 
+        guard backend != STTBackend.current else { return }
+
         // Check for API key if selecting cloud backend
-        if backend == .deepgram && APIKeyStore.get(for: .deepgram) == nil {
-            promptForAPIKey(backend: .deepgram) { [weak self] success in
+        if backend.requiresAPIKey && APIKeyStore.get(for: backend) == nil {
+            promptForAPIKey(backend: backend) { [weak self] success in
                 if success {
                     self?.switchBackend(to: backend)
                 }
@@ -1277,11 +1286,46 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func switchBackend(to backend: STTBackend) {
         STTBackend.current = backend
+        _ = UserDefaults.standard.synchronize()
 
+        restartApplication(afterSwitchingTo: backend)
+    }
+
+    private func restartApplication(afterSwitchingTo backend: STTBackend) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+
+        var environment = ProcessInfo.processInfo.environment
+        let appURL = Bundle.main.bundleURL
+
+        if appURL.pathExtension == "app" {
+            environment["YAPPATRON_RELAUNCH_APP"] = appURL.path
+            task.arguments = ["-c", "sleep 0.6; /usr/bin/open -n \"$YAPPATRON_RELAUNCH_APP\""]
+        } else if let executableURL = Bundle.main.executableURL {
+            environment["YAPPATRON_RELAUNCH_EXECUTABLE"] = executableURL.path
+            task.arguments = ["-c", "sleep 0.6; \"$YAPPATRON_RELAUNCH_EXECUTABLE\" >/dev/null 2>&1 &"]
+        } else {
+            showManualRestartAlert(for: backend)
+            return
+        }
+
+        task.environment = environment
+
+        do {
+            try task.run()
+            prepareForExit()
+            NSApp.terminate(nil)
+        } catch {
+            NSLog("[Yappatron] Failed to schedule relaunch: \(error.localizedDescription)")
+            showManualRestartAlert(for: backend)
+        }
+    }
+
+    private func showManualRestartAlert(for backend: STTBackend) {
         let alert = NSAlert()
         alert.messageText = "Restart Required"
-        alert.informativeText = "Switched to \(backend.rawValue). Please restart Yappatron for the change to take effect."
-        alert.alertStyle = .informational
+        alert.informativeText = "Switched to \(backend.rawValue), but Yappatron could not relaunch itself. Please quit and reopen Yappatron for the change to take effect."
+        alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
@@ -1290,10 +1334,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         promptForAPIKey(backend: .deepgram, completion: nil)
     }
 
+    @objc func setOpenAIAPIKey() {
+        promptForAPIKey(backend: .openAIRealtime, completion: nil)
+    }
+
     private func promptForAPIKey(backend: STTBackend, completion: ((Bool) -> Void)?) {
         let alert = NSAlert()
         alert.messageText = "Enter \(backend.rawValue) API Key"
-        alert.informativeText = "Your API key is stored securely in the macOS Keychain."
+        alert.informativeText = "Your API key is stored in app preferences."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
@@ -1347,11 +1395,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     @objc func quitAction() {
+        prepareForExit()
+        NSApp.terminate(nil)
+    }
+
+    private func prepareForExit() {
         focusObservationTimer?.invalidate()
         unregisterInputFocusLockShortcut()
         unregisterPushToTalkInput()
+        webhookOutbox.cancelAll()
         engine.cleanup()
-        NSApp.terminate(nil)
     }
 }
 
@@ -1367,7 +1420,7 @@ struct SettingsView: View {
             Section("About") {
                 Text("Yappatron")
                     .font(.headline)
-                Text("Voice dictation powered by Parakeet TDT / Deepgram")
+                Text("Voice dictation powered by Parakeet TDT, Deepgram, and OpenAI Realtime")
                     .foregroundStyle(.secondary)
             }
 

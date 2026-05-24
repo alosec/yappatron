@@ -6,8 +6,8 @@ Open-source voice dictation for macOS. Use always-on listening or configurable p
 
 Yappatron is a voice dictation app that:
 
-- **🎙️ Streams in real-time** — Characters appear as you speak (sub-300ms latency with Deepgram)
-- **☁️ Cloud STT** — Deepgram Nova-3 for best-in-class accuracy with punctuation & capitalization
+- **🎙️ Streams in real-time** — Characters appear as you speak with cloud or local STT
+- **☁️ Cloud STT** — OpenAI Realtime (`gpt-realtime-whisper`) and Deepgram Nova-3
 - **🏠 Local STT** — Optional fully local mode via Parakeet (Neural Engine, nothing leaves your machine)
 - **✨ Dual-pass refinement** — Optional enhanced accuracy for local mode
 - **🎨 Beautiful visualizations** — Psychedelic orb animations respond to your voice
@@ -41,6 +41,11 @@ cd yappatron
 
 ## Key Features
 
+### Cloud STT (OpenAI Realtime)
+- **Latest realtime STT model**: Uses `gpt-realtime-whisper`
+- **Low-latency deltas**: Streams transcript text while audio is still arriving
+- **Punctuation & capitalization**: Built-in formatting for dictated text
+
 ### Cloud STT (Deepgram Nova-3)
 - **Sub-300ms latency**: Near-instant transcription via WebSocket streaming
 - **Punctuation & capitalization**: Built-in smart formatting
@@ -53,7 +58,7 @@ cd yappatron
 - **Optional dual-pass**: Enable batch refinement for punctuation & improved accuracy
 
 ### Swappable Backends
-Switch between cloud and local STT via the menu bar. API keys stored securely in app preferences.
+Switch between OpenAI Realtime, Deepgram, and local STT via the menu bar. API keys are stored in app preferences.
 
 ### Ghost Text Diffing
 - Smooth updates with intelligent backspacing
@@ -96,7 +101,7 @@ yappatron/
 - macOS 14.0+ (Sonoma or later)
 - Apple Silicon recommended (M1/M2/M3/M4)
 - Microphone + Accessibility permissions
-- Internet connection (for Deepgram cloud STT; not needed for local mode)
+- Internet connection (for cloud STT; not needed for local mode)
 
 ## Development
 

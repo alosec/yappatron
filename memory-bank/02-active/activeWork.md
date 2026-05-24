@@ -1,6 +1,6 @@
 # Active Work
 
-**Last Updated:** 2026-05-14
+**Last Updated:** 2026-05-24
 
 ## iOS stabilization & next-phase scope (2026-05-10)
 
@@ -101,6 +101,48 @@ Known live-use issues to prioritize:
   and the app/keyboard bridge no longer polls the system pasteboard.
 - Robustness matters more than new features until the delivery path is
   hard to lose data through.
+
+**RECENTLY SHIPPED: OpenAI Realtime STT backend + backend auto-restart**
+
+Mac Yappatron now has a third STT backend: **OpenAI Realtime** using
+`gpt-realtime-whisper`. The backend is selectable from the menu bar,
+uses the same `STTProvider` interface as Deepgram and Local, stores its
+API key in app preferences under `apiKey_OpenAI Realtime`, and returns
+punctuated text so dual-pass refinement stays local-only.
+
+Important implementation detail: OpenAI realtime transcription WebSocket
+sessions must connect with `wss://api.openai.com/v1/realtime?intent=transcription`.
+Do **not** pass a `model` query parameter on the WebSocket URL for this
+mode. The transcription model is configured inside `session.update` at
+`audio.input.transcription.model = "gpt-realtime-whisper"`. Opening a
+regular realtime session and sending a transcription session update
+fails with `Passing a transcription session update event to a realtime
+session is not allowed`.
+
+Shipped behavior:
+- Adds `OpenAIRealtimeSTTProvider` with 16kHz Float32 capture to 24kHz
+  mono PCM16 conversion for the Realtime API.
+- Streams audio via `input_audio_buffer.append` and manually commits on
+  local silence / explicit utterance finish because `gpt-realtime-whisper`
+  transcription sessions require manual commits when turn detection is
+  null.
+- Treats transcript deltas as locked append-only text so the existing
+  cloud typing path types live text instead of waiting for final
+  completion.
+- Adds **Set OpenAI API Key...** and **OpenAI Realtime** backend menu
+  entries.
+- Backend changes now auto-restart Yappatron. This is still a restart,
+  not true hot-swap.
+- Rebuilt, installed, and launched `/Applications/Yappatron.app`.
+
+Validation:
+- `swift build`
+- `swift build -c release`
+- `./scripts/build-app.sh`
+- Direct WebSocket smoke test against the stored key returned
+  `session.updated` with the corrected transcription-intent URL.
+- Live user test succeeded; OpenAI Realtime transcribed speech through
+  the installed app.
 
 **RECENTLY SHIPPED: Input focus locking + UX hardening**
 

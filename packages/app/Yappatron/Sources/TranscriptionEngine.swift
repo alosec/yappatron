@@ -337,6 +337,10 @@ class TranscriptionEngine: ObservableObject {
             let apiKey = APIKeyStore.get(for: .deepgram) ?? ""
             log("Creating DeepgramSTTProvider")
             return DeepgramSTTProvider(apiKey: apiKey)
+        case .openAIRealtime:
+            let apiKey = APIKeyStore.get(for: .openAIRealtime) ?? ""
+            log("Creating OpenAIRealtimeSTTProvider")
+            return OpenAIRealtimeSTTProvider(apiKey: apiKey)
         }
     }
 

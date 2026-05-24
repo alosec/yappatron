@@ -4,6 +4,7 @@ import Foundation
 enum STTBackend: String, CaseIterable {
     case local = "Local (Parakeet)"
     case deepgram = "Deepgram"
+    case openAIRealtime = "OpenAI Realtime"
 
     /// UserDefaults key
     static let defaultsKey = "sttBackend"
@@ -23,7 +24,15 @@ enum STTBackend: String, CaseIterable {
     var returnsPunctuatedText: Bool {
         switch self {
         case .local: return false
-        case .deepgram: return true
+        case .deepgram, .openAIRealtime: return true
+        }
+    }
+
+    /// Whether this backend needs a user-provided cloud API key
+    var requiresAPIKey: Bool {
+        switch self {
+        case .local: return false
+        case .deepgram, .openAIRealtime: return true
         }
     }
 }
