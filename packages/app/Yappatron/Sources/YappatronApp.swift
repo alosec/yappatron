@@ -45,8 +45,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // State
     @Published var isPaused = false
     @Published var isPushToTalkHeld = false
-    @Published var currentTypedText = "" // What we've typed so far (for backspace corrections)
-    var lockedTextLength = 0             // Characters confirmed by is_final (never backspace into these)
+    @Published var currentTypedText = "" // What we've typed so far for append-only updates
+    var lockedTextLength = 0             // Characters confirmed by is_final
     var lockedInputFocusTarget: InputSimulator.InputFocusTarget?
     var recentInputFocusTarget: InputSimulator.InputFocusTarget?
     var inputFocusLockAlertVisible = false
@@ -211,7 +211,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applyTextUpdateToTypingDestination(from oldText: String, to newText: String, logRejection: Bool) -> Bool {
         withTypingDestination(logRejection: logRejection) {
-            inputSimulator.applyTextUpdate(from: oldText, to: newText)
+            _ = inputSimulator.applyTextUpdate(from: oldText, to: newText)
         }
     }
 
@@ -424,7 +424,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     /// Handle partial transcription updates (streaming text)
-    /// For cloud backends: only allows backspacing into interim (tentative) text, never into locked finals
+    /// For cloud backends: only types locked append-only text. Interims are display/speech-state only.
     func handlePartialTranscription(_ partial: String) {
         guard !isPaused else { return }
         guard !webhookOutputEnabled else { return }
@@ -432,7 +432,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if STTBackend.current.returnsPunctuatedText {
             // Cloud backend: only type is_final segments (lockedTextLength matches).
             // Interims flow through for orb/speech detection but aren't typed.
-            guard partial.count <= lockedTextLength && partial.count > currentTypedText.count else {
+            guard partial.count <= lockedTextLength,
+                  partial.count > currentTypedText.count,
+                  partial.hasPrefix(currentTypedText) else {
                 return
             }
 
@@ -447,9 +449,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         withTypingDestination {
-            // Local backend: original behavior
-            inputSimulator.applyTextUpdate(from: currentTypedText, to: partial)
-            currentTypedText = partial
+            // Local backend: only append text when the stream extends what was typed.
+            if inputSimulator.applyTextUpdate(from: currentTypedText, to: partial) {
+                currentTypedText = partial
+            }
         }
     }
 
@@ -466,10 +469,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         withTypingDestination(logRejection: true) {
-            // Correct any interim drift — finals are authoritative
+            // Append any final suffix. Divergent corrections are intentionally ignored.
             if currentTypedText != text {
-                inputSimulator.applyTextUpdate(from: currentTypedText, to: text)
-                currentTypedText = text
+                if inputSimulator.applyTextUpdate(from: currentTypedText, to: text) {
+                    currentTypedText = text
+                }
             }
 
             // Reset locked boundary
@@ -495,8 +499,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         withTypingDestination(logRejection: true) {
-            // Update tracking to reflect refined text
-            currentTypedText = refinedText
+            // Only advance tracking when the refinement is an append-only extension.
+            if currentTypedText.isEmpty || refinedText.hasPrefix(currentTypedText) {
+                currentTypedText = refinedText
+            }
 
             finishUtteranceTyping()
         }

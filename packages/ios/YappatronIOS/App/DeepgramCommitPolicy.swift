@@ -26,7 +26,7 @@ struct DeepgramCommitPolicy {
             return DeepgramCommitPolicy(
                 mode: mode,
                 silenceDebounceMs: 900,
-                speechFinalGraceMs: 0,
+                speechFinalGraceMs: 450,
                 utteranceEndGraceMs: 0
             )
         case .conservative:

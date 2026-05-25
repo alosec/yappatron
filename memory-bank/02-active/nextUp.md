@@ -1,8 +1,17 @@
 # Next Up
 
-**Last Updated:** 2026-05-14
+**Last Updated:** 2026-05-24
 
 ## TOP PRIORITY (next session)
+
+### Deepgram partial latency — P0
+
+Deepgram finalization is now much faster after the 2026-05-24 tuning
+pass. The next slice is partial display speed. First likely lever:
+Mac mic capture and iOS capture both use 4096-frame AVAudioEngine taps,
+which is coarse for realtime partials. Evaluate lowering capture chunk
+size toward the 20-100ms streaming range, then compare partial arrival
+time without destabilizing final EOU behavior.
 
 ### iPhone efficacy and usability — P0
 
@@ -84,9 +93,11 @@ Pairs naturally with the broader "build this into the agent product" plan — on
    - Benefit: catches mid-sentence speaker changes Deepgram misses
    - Only worth doing if hard-mode quality on Deepgram alone proves insufficient for the agent product use case
 
-5. **Backspacing UX** — P2
-   - User flagged as disliked but punted in this session
-   - Need to clarify the actual failure mode before iterating
+5. **Append-only typing smoke test** — P2
+   - 2026-05-24 Mac code now has no delete-key text correction path; retest
+     a correction-heavy Deepgram session after the rebuilt app is installed.
+   - If visible rewriting remains, suspect target-app selection replacement
+     or paste fallback behavior rather than Yappatron sending backspace.
 
 6. **Retroactive rename rewriting** — P3
    - Open question whether reaching back to edit already-typed text is worth the engineering vs. just typing forward and cleaning up post-session
@@ -115,6 +126,7 @@ Pairs naturally with the broader "build this into the agent product" plan — on
 - ✓ **iOS keyboard dictation UX pass** (2026-05-11) — URL handoff from keyboard to app, live dictation state bridge with stale-state heartbeat, live delta insertion into active input, checkmark stop/commit, and simplified main app
 - ✓ **iOS webhook append_text refactor** (2026-05-14) — stable text deltas stream during speech, EOU sends a suffix/submit final payload, and diarized labels are suffixes matching the Mac app's append-only model
 - ✓ **iOS quiet/active listening UI + Deepgram speech gate** (2026-05-14) — main screen rebuilt around quiet/active/finalizing/sending phases, with settings moved behind the gear and Deepgram opened only after local speech onset
+- ✓ **Mac backspacing removed** (2026-05-24) — typing updates are append-only; delete-key helpers removed; divergent recognition corrections no longer rewrite the active input or advance typed-state tracking
 - ✓ **Hybrid diarization shipped** (2026-05-08) — Deepgram word-level segmentation + local FluidAudio embedding override, 0.45 cosine threshold, 0.3s min run, race-fix for typing waiting on override task
 - ✓ **`feature/local-segmenter` branched** (2026-05-08) — experimental local-only diarization preserved off-main; FluidAudio segmentation was coarser than Deepgram's word-level boundaries in real testing
 - ✓ **FluidAudio 0.9.1 → 0.14.4** (2026-05-08) — Swift 6.3 toolchain compatibility; updated `LocalSTTProvider.loadModels(from:)` and `BatchProcessor` decoder-state API

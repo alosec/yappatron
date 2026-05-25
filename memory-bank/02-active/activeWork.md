@@ -2,6 +2,41 @@
 
 **Last Updated:** 2026-05-24
 
+## Deepgram latency tuning (2026-05-24)
+
+Deepgram no longer waits on the old app-side complete-thought policy by
+default. The Mac backend now uses `endpointing=650`,
+`utterance_end_ms=1000`, a 900ms fallback EOU timer, and a 450ms
+`speech_final` grace window. This keeps the faster feel while avoiding
+the first live-test failure mode where immediate `speech_final` cut off
+natural continuation phrases.
+
+iOS Deepgram received the same endpointing values. Responsive mode now
+uses a 900ms silence debounce and 450ms `speech_final` grace, while
+conservative mode still respects the longer thought-pause setting for
+webhook/return-sensitive delivery. iOS `finish()` no longer sleeps a
+fixed 1.2s after `Finalize`; it completes on Deepgram's
+`from_finalize` response with a short timeout fallback.
+
+Validation:
+- `./scripts/build-app.sh`
+- `./scripts/build-ios.sh`
+- Installed and relaunched `/Applications/Yappatron.app`
+- Live user test confirmed Deepgram finalizes much sooner; follow-up
+  live notes showed the instant-final version cut phrases too eagerly,
+  so the current version keeps a small grace window.
+
+Next slice: make partials appear faster. The likely first lever is the
+4096-frame AVAudioEngine tap size in Mac mic capture and iOS capture.
+Keep that separate from finalization timing.
+
+Same live pass removed the remaining Mac typing backspace behavior:
+`InputSimulator.applyTextUpdate` is now append-only, the old delete-key
+helpers were removed, and AppDelegate only advances `currentTypedText`
+when a partial/final/refinement update actually extends what was already
+typed. Divergent recognition corrections are ignored instead of rewriting
+the active input.
+
 ## iOS stabilization & next-phase scope (2026-05-10)
 
 Long planning session after the Callie call. Pulled the iPhone app
@@ -509,7 +544,7 @@ Captured vision for speaker diarization, voice profiles, multi-model offerings, 
 
 - [ ] Auto-clear speaker rename map on new transcription session (Mom's foot-gun risk: yesterday's Mom can become today's Callie if reused)
 - [ ] Confirm local Parakeet backend still works under FluidAudio 0.14.4 (smoke test pending)
-- [ ] Address backspacing UX (flagged as disliked, untouched this session)
+- [x] Address backspacing UX (2026-05-24: Mac typing updates are append-only; no delete/backspace events)
 - [ ] Retroactive rename rewriting of already-typed transcript (open question — worth it?)
 - [ ] Ensemble diarization (Deepgram + local segmentation + local identity) for harder real-world conditions
 - [ ] Test iPhone Local mode on device end-to-end

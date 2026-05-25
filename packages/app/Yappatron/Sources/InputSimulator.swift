@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 import Carbon.HIToolbox
 
-/// Simulates keyboard input with support for backspace corrections
+/// Simulates keyboard input for append-only dictation output.
 class InputSimulator {
 
     private struct FocusedElementContext {
@@ -226,27 +226,6 @@ class InputSimulator {
         snapshot.restore(to: pasteboard)
     }
     
-    /// Delete a character (backspace)
-    func deleteChar() {
-        let source = CGEventSource(stateID: .hidSystemState)
-        
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(0x33), keyDown: true)
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(0x33), keyDown: false)
-        keyDown?.flags = []
-        keyUp?.flags = []
-        
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
-    }
-    
-    /// Delete multiple characters
-    func deleteChars(_ count: Int) {
-        for _ in 0..<count {
-            deleteChar()
-            Thread.sleep(forTimeInterval: 0.002)
-        }
-    }
-    
     /// Press Enter/Return key
     func pressEnter() {
         let source = CGEventSource(stateID: .hidSystemState)
@@ -262,25 +241,27 @@ class InputSimulator {
     
     // MARK: - Smart Streaming
     
-    /// Apply a text update with minimal keystrokes
-    /// Compares old vs new text and uses backspace + type to correct
-    func applyTextUpdate(from oldText: String, to newText: String) {
-        // Find common prefix
-        let commonPrefixLength = zip(oldText, newText).prefix(while: { $0 == $1 }).count
-        
-        // Calculate how many chars to delete and what to add
-        let charsToDelete = oldText.count - commonPrefixLength
-        let newSuffix = String(newText.dropFirst(commonPrefixLength))
-        
-        // Delete divergent chars
-        if charsToDelete > 0 {
-            deleteChars(charsToDelete)
+    /// Apply a text update without deleting existing destination text.
+    /// Divergent recognition corrections are intentionally ignored instead of
+    /// rewriting the user's active input.
+    @discardableResult
+    func applyTextUpdate(from oldText: String, to newText: String) -> Bool {
+        guard !newText.isEmpty else { return oldText.isEmpty }
+
+        if oldText.isEmpty {
+            typeString(newText)
+            return true
         }
-        
-        // Type new suffix
+
+        guard newText.hasPrefix(oldText) else {
+            return false
+        }
+
+        let newSuffix = String(newText.dropFirst(oldText.count))
         if !newSuffix.isEmpty {
             typeString(newSuffix)
         }
+        return true
     }
     
     // MARK: - Context Detection

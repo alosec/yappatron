@@ -25,7 +25,8 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     private var eouTimer: Task<Void, Never>?
     private var finalizeContinuation: CheckedContinuation<String?, Never>?
     private var finalizeTimeoutTask: Task<Void, Never>?
-    private let eouDebounceMs: UInt64 = 800
+    private let eouDebounceMs: UInt64 = 900
+    private let speechFinalGraceMs: UInt64 = 450
 
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
@@ -274,7 +275,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             if fromFinalize || finalizeContinuation != nil {
                 completeFinalize()
             } else if speechFinal {
-                emitCurrentUtterance(reason: "speech_final")
+                scheduleEOUTimer(reason: "speech_final grace", delayMs: speechFinalGraceMs)
             }
             return
         }
@@ -304,7 +305,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             if fromFinalize || finalizeContinuation != nil {
                 completeFinalize()
             } else if speechFinal {
-                emitCurrentUtterance(reason: "speech_final")
+                scheduleEOUTimer(reason: "speech_final grace", delayMs: speechFinalGraceMs)
             } else {
                 scheduleEOUTimer()
             }
@@ -323,14 +324,15 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         emitCurrentUtterance(reason: "UtteranceEnd")
     }
 
-    private func scheduleEOUTimer() {
+    private func scheduleEOUTimer(reason: String = "EOU timer", delayMs: UInt64? = nil) {
         eouTimer?.cancel()
         eouTimer = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: (self?.eouDebounceMs ?? 800) * 1_000_000)
+            let sleepMs = delayMs ?? self?.eouDebounceMs ?? 1200
+            try? await Task.sleep(nanoseconds: sleepMs * 1_000_000)
             guard !Task.isCancelled else { return }
             guard let self = self, !self.currentUtterance.isEmpty else { return }
 
-            self.emitCurrentUtterance(reason: "EOU timer")
+            self.emitCurrentUtterance(reason: reason)
         }
     }
 
