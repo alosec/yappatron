@@ -63,6 +63,8 @@ final class DeepgramStreamingClient: NSObject {
     private var isConnected = false
     private var eouTask: Task<Void, Never>?
     private var eouGeneration = 0
+    private var finalizeContinuation: CheckedContinuation<String, Never>?
+    private var finalizeTimeoutTask: Task<Void, Never>?
 
     init(apiKey: String, commitPolicy: DeepgramCommitPolicy) {
         self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -84,8 +86,8 @@ final class DeepgramStreamingClient: NSObject {
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
             URLQueryItem(name: "channels", value: "1"),
-            URLQueryItem(name: "endpointing", value: "2750"),
-            URLQueryItem(name: "utterance_end_ms", value: "2750")
+            URLQueryItem(name: "endpointing", value: "650"),
+            URLQueryItem(name: "utterance_end_ms", value: "1000")
         ]
 
         guard let url = components?.url else {
@@ -128,11 +130,27 @@ final class DeepgramStreamingClient: NSObject {
             return currentTranscript()
         }
 
-        try? await webSocketTask.send(.string("{\"type\":\"Finalize\"}"))
-        try? await Task.sleep(nanoseconds: 1_200_000_000)
-        emitPendingUtterance(reason: .finalize)
+        eouTask?.cancel()
+        eouTask = nil
 
-        return currentTranscript()
+        return await withCheckedContinuation { continuation in
+            finalizeContinuation?.resume(returning: currentTranscript())
+            finalizeContinuation = continuation
+
+            finalizeTimeoutTask?.cancel()
+            finalizeTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                self?.completeFinalize()
+            }
+
+            Task { [weak self] in
+                do {
+                    try await webSocketTask.send(.string("{\"type\":\"Finalize\"}"))
+                } catch {
+                    self?.completeFinalize()
+                }
+            }
+        }
     }
 
     func disconnect() async {
@@ -140,9 +158,13 @@ final class DeepgramStreamingClient: NSObject {
         receiveTask?.cancel()
         keepAliveTask?.cancel()
         eouTask?.cancel()
+        finalizeTimeoutTask?.cancel()
+        finalizeContinuation?.resume(returning: currentTranscript())
         receiveTask = nil
         keepAliveTask = nil
         eouTask = nil
+        finalizeTimeoutTask = nil
+        finalizeContinuation = nil
 
         if let webSocketTask {
             try? await webSocketTask.send(.string("{\"type\":\"CloseStream\"}"))
@@ -225,11 +247,23 @@ final class DeepgramStreamingClient: NSObject {
     }
 
     private func handleResults(_ message: Message) {
-        guard let alternative = message.channel?.alternatives.first,
-              !alternative.transcript.isEmpty else {
+        guard let alternative = message.channel?.alternatives.first else {
             return
         }
         let transcript = alternative.transcript
+
+        if transcript.isEmpty {
+            if message.from_finalize == true {
+                completeFinalize()
+            } else if message.speech_final == true {
+                if commitPolicy.speechFinalGraceMs == 0 {
+                    emitPendingUtterance(reason: .speechFinal)
+                } else {
+                    scheduleEOU(reason: .speechFinalGrace, delayMs: commitPolicy.speechFinalGraceMs)
+                }
+            }
+            return
+        }
 
         if message.is_final == true {
             latestInterim = ""
@@ -243,7 +277,7 @@ final class DeepgramStreamingClient: NSObject {
             publishTranscript(isFinal: true)
 
             if message.from_finalize == true {
-                emitPendingUtterance(reason: .finalize)
+                completeFinalize()
             } else if message.speech_final == true {
                 if commitPolicy.speechFinalGraceMs == 0 {
                     emitPendingUtterance(reason: .speechFinal)
@@ -355,6 +389,17 @@ final class DeepgramStreamingClient: NSObject {
             onDiarized?(turn)
             onTranscript?(fullTranscript, true)
         }
+    }
+
+    private func completeFinalize() {
+        finalizeTimeoutTask?.cancel()
+        finalizeTimeoutTask = nil
+
+        emitPendingUtterance(reason: .finalize)
+
+        guard let continuation = finalizeContinuation else { return }
+        finalizeContinuation = nil
+        continuation.resume(returning: currentTranscript())
     }
 }
 

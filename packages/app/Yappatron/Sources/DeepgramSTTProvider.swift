@@ -25,7 +25,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     private var eouTimer: Task<Void, Never>?
     private var finalizeContinuation: CheckedContinuation<String?, Never>?
     private var finalizeTimeoutTask: Task<Void, Never>?
-    private let eouDebounceMs: UInt64 = 3500
+    private let eouDebounceMs: UInt64 = 800
 
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
@@ -51,7 +51,8 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
             URLQueryItem(name: "channels", value: "1"),
-            URLQueryItem(name: "endpointing", value: "2750"),
+            URLQueryItem(name: "endpointing", value: "650"),
+            URLQueryItem(name: "utterance_end_ms", value: "1000"),
             URLQueryItem(name: "smart_format", value: "true"),
             URLQueryItem(name: "diarize", value: "true"),
         ]
@@ -267,8 +268,16 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
 
         let isFinal = json["is_final"] as? Bool ?? false
         let fromFinalize = json["from_finalize"] as? Bool ?? false
+        let speechFinal = json["speech_final"] as? Bool ?? false
 
-        guard !transcript.isEmpty else { return }
+        if transcript.isEmpty {
+            if fromFinalize || finalizeContinuation != nil {
+                completeFinalize()
+            } else if speechFinal {
+                emitCurrentUtterance(reason: "speech_final")
+            }
+            return
+        }
 
         if isFinal {
             // Clear any interim text first, then show the locked final
@@ -284,28 +293,20 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
                 appendDiarizedRuns(from: words)
             }
 
-            if false /* speechFinal disabled — let silence timeout handle EOU */ {
-                let utterance = currentUtterance
-                currentUtterance = ""
-                eouTimer?.cancel()
+            log("DeepgramSTTProvider: Final segment: '\(currentUtterance)'")
+            let partial = currentUtterance
+            let lockedLen = partial.count
+            DispatchQueue.main.async { [weak self] in
+                self?.onLockedTextAdvanced?(lockedLen)
+                self?.onPartial?(partial)
+            }
 
-                log("DeepgramSTTProvider: Final (speech_final): '\(utterance)'")
-                DispatchQueue.main.async { [weak self] in
-                    self?.onFinal?(utterance)
-                }
+            if fromFinalize || finalizeContinuation != nil {
+                completeFinalize()
+            } else if speechFinal {
+                emitCurrentUtterance(reason: "speech_final")
             } else {
-                log("DeepgramSTTProvider: Final segment: '\(currentUtterance)'")
-                let partial = currentUtterance
-                let lockedLen = partial.count
-                DispatchQueue.main.async { [weak self] in
-                    self?.onLockedTextAdvanced?(lockedLen)
-                    self?.onPartial?(partial)
-                }
-                if fromFinalize || finalizeContinuation != nil {
-                    completeFinalize()
-                } else {
-                    scheduleEOUTimer()
-                }
+                scheduleEOUTimer()
             }
         } else {
             // Send interims for speech detection (orb) — app uses lockedTextLength
@@ -319,14 +320,30 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     }
 
     private func handleUtteranceEnd() {
+        emitCurrentUtterance(reason: "UtteranceEnd")
+    }
+
+    private func scheduleEOUTimer() {
+        eouTimer?.cancel()
+        eouTimer = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: (self?.eouDebounceMs ?? 800) * 1_000_000)
+            guard !Task.isCancelled else { return }
+            guard let self = self, !self.currentUtterance.isEmpty else { return }
+
+            self.emitCurrentUtterance(reason: "EOU timer")
+        }
+    }
+
+    private func emitCurrentUtterance(reason: String) {
         guard !currentUtterance.isEmpty else { return }
 
         let utterance = currentUtterance
         let runs = takeRunsWithTimings()
         currentUtterance = ""
         eouTimer?.cancel()
+        eouTimer = nil
 
-        log("DeepgramSTTProvider: UtteranceEnd: '\(utterance)' (\(runs.count) speaker runs)")
+        log("DeepgramSTTProvider: \(reason): '\(utterance)' (\(runs.count) speaker runs)")
         if finalizeContinuation != nil {
             completeFinalize(with: utterance)
             return
@@ -337,27 +354,6 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
                 self?.onDiarizedFinal?(runs)
             }
             self?.onFinal?(utterance)
-        }
-    }
-
-    private func scheduleEOUTimer() {
-        eouTimer?.cancel()
-        eouTimer = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: (self?.eouDebounceMs ?? 800) * 1_000_000)
-            guard !Task.isCancelled else { return }
-            guard let self = self, !self.currentUtterance.isEmpty else { return }
-
-            let utterance = self.currentUtterance
-            let runs = self.takeRunsWithTimings()
-            self.currentUtterance = ""
-
-            log("DeepgramSTTProvider: EOU timer fired: '\(utterance)' (\(runs.count) speaker runs)")
-            DispatchQueue.main.async { [weak self] in
-                if !runs.isEmpty {
-                    self?.onDiarizedFinal?(runs)
-                }
-                self?.onFinal?(utterance)
-            }
         }
     }
 
