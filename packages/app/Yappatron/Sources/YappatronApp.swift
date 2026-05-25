@@ -2,7 +2,6 @@ import SwiftUI
 import HotKey
 import Combine
 
-@main
 struct YappatronApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 

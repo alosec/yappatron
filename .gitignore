@@ -43,6 +43,10 @@ build/
 *.log
 logs/
 
+# Benchmark outputs
+bench/generated/
+bench/results/
+
 # Local config
 .env
 .env.local

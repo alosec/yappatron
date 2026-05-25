@@ -25,8 +25,12 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     private var eouTimer: Task<Void, Never>?
     private var finalizeContinuation: CheckedContinuation<String?, Never>?
     private var finalizeTimeoutTask: Task<Void, Never>?
-    private let eouDebounceMs: UInt64 = 900
-    private let speechFinalGraceMs: UInt64 = 450
+    private var lastLocalSpeechAt = Date.distantPast
+    private let eouDebounceMs: UInt64 = 1800
+    private let speechFinalGraceMs: UInt64 = 1400
+    private let utteranceEndGraceMs: UInt64 = 900
+    private let localSpeechHoldMs: UInt64 = 900
+    private let localSpeechRMSFloor: Float = 0.0025
 
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
@@ -104,11 +108,23 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
 
         // Convert Float32 [-1.0, 1.0] to Int16 [-32768, 32767]
         var data = Data(count: frameLength * 2)
+        var sumSquares: Float = 0
         data.withUnsafeMutableBytes { rawBuffer in
             let int16Buffer = rawBuffer.bindMemory(to: Int16.self)
             for i in 0..<frameLength {
                 let clamped = max(-1.0, min(1.0, floatPointer[i]))
+                sumSquares += clamped * clamped
                 int16Buffer[i] = Int16(clamped * 32767.0)
+            }
+        }
+
+        if frameLength > 0 {
+            let rms = sqrt(sumSquares / Float(frameLength))
+            if rms >= localSpeechRMSFloor {
+                lastLocalSpeechAt = Date()
+                if !currentUtterance.isEmpty, eouTimer != nil {
+                    scheduleEOUTimer(reason: "local speech continuation", delayMs: eouDebounceMs)
+                }
             }
         }
 
@@ -321,7 +337,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     }
 
     private func handleUtteranceEnd() {
-        emitCurrentUtterance(reason: "UtteranceEnd")
+        scheduleEOUTimer(reason: "UtteranceEnd grace", delayMs: utteranceEndGraceMs)
     }
 
     private func scheduleEOUTimer(reason: String = "EOU timer", delayMs: UInt64? = nil) {
@@ -331,6 +347,13 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             try? await Task.sleep(nanoseconds: sleepMs * 1_000_000)
             guard !Task.isCancelled else { return }
             guard let self = self, !self.currentUtterance.isEmpty else { return }
+
+            let speechHoldElapsedMs = Date().timeIntervalSince(self.lastLocalSpeechAt) * 1000.0
+            if speechHoldElapsedMs < Double(self.localSpeechHoldMs) {
+                let remainingMs = self.localSpeechHoldMs - UInt64(max(0, speechHoldElapsedMs))
+                self.scheduleEOUTimer(reason: "local speech hold", delayMs: max(remainingMs, 200))
+                return
+            }
 
             self.emitCurrentUtterance(reason: reason)
         }
