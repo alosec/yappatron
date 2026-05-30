@@ -1,6 +1,46 @@
 # Active Work
 
-**Last Updated:** 2026-05-24
+**Last Updated:** 2026-05-29
+
+## Local STT upgrade: 160ms EOU stream + default punctuation dual-pass (2026-05-29)
+
+Acted on the long-standing "Model currency" item. The local instant
+stream was Parakeet **EOU 120M at 320ms** chunks — fast but lightly
+punctuated, which is exactly the weak spot. Shipped a low-risk upgrade
+that keeps the EOU finalization architecture (green orb / auto-send /
+diarization) intact:
+
+- **FluidAudio 0.14.4 → 0.14.7** (latest release, 2026-05-19).
+- **Local stream switched to the 160ms EOU variant** (`StreamingEouAsrManager(chunkSize: .ms160)`,
+  `Repo.parakeetEou160`) for the lowest-latency "instant" feel.
+- **Dual-pass refinement now defaults ON for local mode.** Finished
+  utterances are re-run through Parakeet **TDT-v3** (`BatchProcessor`),
+  which adds punctuation + capitalization. `enableDualPassRefinement`
+  returns `true` when the UserDefaults key is unset; cloud backends still
+  skip it via `returnsPunctuatedText`. The dev machine's previously-false
+  key was flipped to true (`defaults write com.yappatron.app
+  enableDualPassRefinement -bool true`).
+
+Why not Moonshine? Research (onresonant Feb-2026 comparison, dicta.to
+benchmark, NeMo docs) confirms Moonshine (245M, MIT, purpose-built for
+streaming, low hallucination) is the best *streaming* local model in
+2026, with Parakeet TDT v3 (600M, Apache-2) best for raw accuracy. But
+Moonshine ships as PyTorch/ONNX/JS/MLX, **not** CoreML/FluidAudio. The
+whole local pipeline is FluidAudio CoreML managers + EOU-callback
+finalization, so Moonshine would mean a new MLX inference engine in Swift
+plus a new VAD-based finalizer — a multi-day rewrite, not a quick
+upgrade, and it would break the EOU flow. The 160ms-EOU + TDT-v3 dual-
+pass path is the right "ship now" move. Nemotron streaming 0.6B /
+Qwen3-ASR 0.6B (both now in FluidAudio 0.14.7, both punctuation-capable)
+remain the next A/B candidates if we later add a VAD finalizer.
+
+Validation:
+- `./scripts/build-app.sh` — Build complete (70s), no errors.
+- `./scripts/run-dev.sh` — installed to `/Applications/Yappatron.app`,
+  relaunched, process confirmed running.
+- Committed `36c7798` and pushed to `alosec/yappatron` main.
+- Live dictation accuracy/punctuation confirmation still pending a user
+  test pass.
 
 ## Deepgram latency tuning (2026-05-24)
 
@@ -531,7 +571,22 @@ See "Current Focus" above. Open design questions to be resolved before implement
 
 ### Model currency
 
-Research done 2026-05-08. We're on FluidAudio 0.14.4 (current as of 2026-05-04) but using its older `StreamingEouAsrManager` (Parakeet EOU 120M). The same package now exposes `StreamingNemotronAsrManager` (NVIDIA Nemotron streaming with encoder cache, 160ms chunks) which is likely a meaningful upgrade for English dictation latency. NVIDIA also released `parakeet-unified-en-0.6b` in April 2026 — SOTA English fit, needs CoreML port if not yet wrapped. Apple's SpeechAnalyzer in macOS 26 Tahoe is a viable third backend slot. Lowest-effort upgrade: drop in `StreamingNemotronAsrManager` and A/B against current. Captured in nextUp.
+**Updated 2026-05-29 — partially shipped.** Now on FluidAudio **0.14.7**.
+Local stream moved from Parakeet EOU 120M @320ms to **@160ms**, and
+**TDT-v3 dual-pass is the default** for local mode (adds punctuation +
+capitalization). See the dated session note at the top.
+
+Still open as next A/B candidates, both now wrapped in FluidAudio 0.14.7
+and punctuation-capable but lacking built-in EOU (need a VAD/silence
+finalizer to slot in without breaking the green-orb flow):
+- `StreamingNemotronAsrManager` (Nemotron streaming 0.6B, 560/1120ms
+  cache-aware chunks).
+- `Qwen3AsrManager` / `Qwen3StreamingManager` (Qwen3-ASR 0.6B, f32/int8).
+
+Out-of-pipeline option: **Moonshine** (245M, MIT, best 2026 streaming
+model) — would require a new MLX/ONNX Swift inference engine + VAD
+finalizer. Apple's SpeechAnalyzer (macOS 26 Tahoe) is still a viable
+third backend slot.
 
 ### Hybrid diarization tunable: `minRunSeconds = 0.0`
 
@@ -543,7 +598,7 @@ Captured vision for speaker diarization, voice profiles, multi-model offerings, 
 ### Other Backlog
 
 - [ ] Auto-clear speaker rename map on new transcription session (Mom's foot-gun risk: yesterday's Mom can become today's Callie if reused)
-- [ ] Confirm local Parakeet backend still works under FluidAudio 0.14.4 (smoke test pending)
+- [x] Confirm local Parakeet backend works under FluidAudio 0.14.7 (2026-05-29: builds clean, 160ms EOU stream + TDT-v3 dual-pass; live dictation confirmation still pending)
 - [x] Address backspacing UX (2026-05-24: Mac typing updates are append-only; no delete/backspace events)
 - [ ] Retroactive rename rewriting of already-typed transcript (open question — worth it?)
 - [ ] Ensemble diarization (Deepgram + local segmentation + local identity) for harder real-world conditions
