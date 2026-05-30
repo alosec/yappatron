@@ -10,7 +10,7 @@ let package = Package(
         .executable(name: "Yappatron", targets: ["Yappatron"])
     ],
     dependencies: [
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.4"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.7"),
         .package(url: "https://github.com/soffes/HotKey.git", from: "0.2.0"),
     ],
     targets: [

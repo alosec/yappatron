@@ -62,7 +62,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     var enableDualPassRefinement: Bool {
-        get { UserDefaults.standard.bool(forKey: "enableDualPassRefinement") }
+        // Default ON for local mode: the instant Parakeet EOU stream is fast but
+        // lightly punctuated, so the TDT-v3 dual-pass adds punctuation and
+        // capitalization on each finished utterance. Cloud backends already
+        // return punctuated text and skip this (see returnsPunctuatedText).
+        get {
+            if UserDefaults.standard.object(forKey: "enableDualPassRefinement") == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: "enableDualPassRefinement")
+        }
         set { UserDefaults.standard.set(newValue, forKey: "enableDualPassRefinement") }
     }
 

@@ -18,9 +18,12 @@ class LocalSTTProvider: STTProvider {
         let config = MLModelConfiguration()
         config.computeUnits = .cpuAndNeuralEngine
 
+        // Use the 160ms EOU chunk for the lowest-latency "instant" stream.
+        // Finished utterances are punctuated/capitalized by the TDT-v3 dual-pass
+        // (enabled by default for local mode in YappatronApp).
         let manager = StreamingEouAsrManager(
             configuration: config,
-            chunkSize: .ms320,
+            chunkSize: .ms160,
             eouDebounceMs: 800
         )
 
@@ -35,7 +38,7 @@ class LocalSTTProvider: STTProvider {
         }
 
         streamingManager = manager
-        log("LocalSTTProvider: Parakeet EOU ready")
+        log("LocalSTTProvider: Parakeet EOU 120M (160ms) ready")
     }
 
     func processAudio(_ buffer: AVAudioPCMBuffer) async throws {
@@ -63,7 +66,7 @@ class LocalSTTProvider: STTProvider {
     private func downloadModels() async throws -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let modelsDir = appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)
-        let modelPath = modelsDir.appendingPathComponent(Repo.parakeetEou320.folderName)
+        let modelPath = modelsDir.appendingPathComponent(Repo.parakeetEou160.folderName)
 
         let encoderPath = modelPath.appendingPathComponent("streaming_encoder.mlmodelc")
         if FileManager.default.fileExists(atPath: encoderPath.path) {
@@ -79,7 +82,7 @@ class LocalSTTProvider: STTProvider {
         ]
 
         _ = try await DownloadUtils.loadModels(
-            .parakeetEou320,
+            .parakeetEou160,
             modelNames: actuallyNeeded,
             directory: modelsDir,
             computeUnits: .cpuAndNeuralEngine
