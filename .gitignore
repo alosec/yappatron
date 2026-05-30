@@ -60,3 +60,6 @@ bench/results/
 
 # User data
 ~/.yappatron/
+
+# Local editor/agent config
+.claude/

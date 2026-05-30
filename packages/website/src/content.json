@@ -27,7 +27,7 @@
     },
     {
       "title": "local or cloud — your call",
-      "body": "Switch between OpenAI Realtime, Deepgram cloud STT, and fully local Parakeet from the menu bar. Your words, your rules."
+      "body": "Switch between OpenAI Realtime, Deepgram cloud STT, and fully local Nemotron from the menu bar. Your words, your rules."
     }
   ],
   "steps": [

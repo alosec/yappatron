@@ -331,7 +331,7 @@ class TranscriptionEngine: ObservableObject {
     private func createProvider() -> STTProvider {
         switch backend {
         case .local:
-            log("Creating LocalSTTProvider (Parakeet)")
+            log("Creating LocalSTTProvider (Nemotron)")
             return LocalSTTProvider()
         case .deepgram:
             let apiKey = APIKeyStore.get(for: .deepgram) ?? ""

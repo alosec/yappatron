@@ -6,6 +6,17 @@ enum STTBackend: String, CaseIterable {
     case deepgram = "Deepgram"
     case openAIRealtime = "OpenAI Realtime"
 
+    /// User-facing display name. Kept separate from `rawValue` because
+    /// `rawValue` is the persisted UserDefaults value and must stay stable
+    /// across model swaps.
+    var displayName: String {
+        switch self {
+        case .local: return "Local (Nemotron)"
+        case .deepgram: return "Deepgram"
+        case .openAIRealtime: return "OpenAI Realtime"
+        }
+    }
+
     /// UserDefaults key
     static let defaultsKey = "sttBackend"
 

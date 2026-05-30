@@ -3,91 +3,163 @@ import FluidAudio
 import AVFoundation
 import CoreML
 
-/// Local Parakeet-based STT provider (wraps existing StreamingEouAsrManager)
+/// Local Nemotron-based streaming STT provider, gated by Silero VAD.
+///
+/// Uses FluidAudio's `StreamingNemotronAsrManager` (NVIDIA Nemotron Speech
+/// Streaming 0.6B, 160ms cache-aware chunks). Unlike the older Parakeet EOU
+/// 120M model, Nemotron punctuates and capitalizes *inline* as it streams and
+/// is meaningfully more accurate — finished utterances are already punctuated
+/// without a second pass.
+///
+/// Nemotron has no voice-activity gating or end-of-utterance detection. Fed
+/// silence, it hallucinates phantom phrases ("Thank you.", "you", etc.). A
+/// plain RMS gate isn't enough — a noisy mic floor trips it. So this provider
+/// front-gates the model with FluidAudio's **Silero neural VAD**:
+///
+/// - Audio is only forwarded to Nemotron between Silero's `.speechStart` and
+///   `.speechEnd` events. Silence/noise is never decoded.
+/// - A short pre-roll of buffers is flushed on `.speechStart` so the first
+///   word isn't clipped.
+/// - `.speechEnd` finalizes the utterance and emits the punctuated final.
 class LocalSTTProvider: STTProvider {
-    private var streamingManager: StreamingEouAsrManager?
+    private var streamingManager: StreamingNemotronAsrManager?
+    private var vad: VadManager?
+    private var vadState: VadStreamState?
+    private let audioConverter = AudioConverter()
 
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
     var onLockedTextAdvanced: ((Int) -> Void)?
     var onDiarizedFinal: (([(speakerId: Int, text: String, startSec: Double, endSec: Double)]) -> Void)?
 
-    func start() async throws {
-        let modelDir = try await downloadModels()
+    /// Silero processes fixed 4096-sample (16kHz) chunks.
+    private let vadChunkSamples = VadManager.chunkSize
+    private var vadSampleBuffer: [Float] = []
 
+    /// True between Silero `.speechStart` and `.speechEnd` — only then do we decode.
+    private var inSpeech = false
+    private var isFinalizing = false
+
+    /// Recent buffers kept as pre-roll so onset doesn't clip the first word.
+    private let preRollBufferCount = 4
+    private var preRoll: [AVAudioPCMBuffer] = []
+
+    func start() async throws {
         let config = MLModelConfiguration()
         config.computeUnits = .cpuAndNeuralEngine
 
-        // Use the 160ms EOU chunk for the lowest-latency "instant" stream.
-        // Finished utterances are punctuated/capitalized by the TDT-v3 dual-pass
-        // (enabled by default for local mode in YappatronApp).
-        let manager = StreamingEouAsrManager(
+        let manager = StreamingNemotronAsrManager(
             configuration: config,
-            chunkSize: .ms160,
-            eouDebounceMs: 800
+            requestedChunkSize: .ms160
         )
-
-        try await manager.loadModels(from: modelDir)
-
+        // Downloads from HuggingFace on first use, then loads from cache.
+        try await manager.loadModels()
         await manager.setPartialCallback { [weak self] partial in
-            self?.onPartial?(partial)
+            guard let self = self, self.inSpeech else { return }
+            self.onPartial?(partial)
         }
-
-        await manager.setEouCallback { [weak self] final in
-            self?.onFinal?(final)
-        }
-
         streamingManager = manager
-        log("LocalSTTProvider: Parakeet EOU 120M (160ms) ready")
+
+        // Silero VAD gate (downloads its small CoreML model on first use).
+        let vadManager = try await VadManager()
+        vad = vadManager
+        vadState = await vadManager.makeStreamState()
+
+        log("LocalSTTProvider: Nemotron 0.6B (160ms) + Silero VAD ready")
     }
 
     func processAudio(_ buffer: AVAudioPCMBuffer) async throws {
-        _ = try await streamingManager?.process(audioBuffer: buffer)
+        guard let manager = streamingManager, let vad = vad else { return }
+
+        // Convert to 16kHz mono Float for the VAD.
+        let samples = (try? audioConverter.resampleBuffer(buffer)) ?? []
+
+        // Maintain a short pre-roll while idle so onset isn't clipped.
+        if !inSpeech {
+            preRoll.append(buffer)
+            if preRoll.count > preRollBufferCount { preRoll.removeFirst() }
+        }
+
+        // Run the VAD over fixed-size chunks, handling start/end events.
+        vadSampleBuffer.append(contentsOf: samples)
+        while vadSampleBuffer.count >= vadChunkSamples {
+            let chunk = Array(vadSampleBuffer.prefix(vadChunkSamples))
+            vadSampleBuffer.removeFirst(vadChunkSamples)
+
+            guard var state = vadState else { break }
+            let result = try await vad.processStreamingChunk(chunk, state: state)
+            vadState = result.state
+
+            if let event = result.event {
+                if event.isStart {
+                    try await handleSpeechStart(manager)
+                } else if event.isEnd {
+                    await handleSpeechEnd(manager)
+                }
+            }
+            _ = state
+        }
+
+        // While speech is active, stream this buffer to Nemotron.
+        if inSpeech {
+            _ = try await manager.process(audioBuffer: buffer)
+        }
+    }
+
+    private func handleSpeechStart(_ manager: StreamingNemotronAsrManager) async throws {
+        guard !inSpeech else { return }
+        inSpeech = true
+        isFinalizing = false
+        // Flush pre-roll so the first word isn't lost.
+        for pre in preRoll {
+            _ = try? await manager.process(audioBuffer: pre)
+        }
+        preRoll.removeAll()
+    }
+
+    private func handleSpeechEnd(_ manager: StreamingNemotronAsrManager) async {
+        guard inSpeech, !isFinalizing else { return }
+        isFinalizing = true
+        inSpeech = false
+        let text = (try? await manager.finish()) ?? ""
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            onFinal?(trimmed)
+        }
+        await manager.reset()
+        isFinalizing = false
     }
 
     func finishCurrentUtterance() async throws -> String? {
-        return try await streamingManager?.finish()
+        guard inSpeech else { return nil }
+        let text = try await streamingManager?.finish()
+        inSpeech = false
+        await streamingManager?.reset()
+        return text
     }
 
     func finish() async throws -> String? {
-        return try await streamingManager?.finish()
+        let wasSpeaking = inSpeech
+        let text = try await streamingManager?.finish()
+        inSpeech = false
+        await streamingManager?.reset()
+        return wasSpeaking ? text : nil
     }
 
     func reset() async {
         await streamingManager?.reset()
+        if let vad = vad {
+            vadState = await vad.makeStreamState()
+        }
+        vadSampleBuffer.removeAll()
+        preRoll.removeAll()
+        inSpeech = false
+        isFinalizing = false
     }
 
     func cleanup() {
         streamingManager = nil
-    }
-
-    // MARK: - Model Download
-
-    private func downloadModels() async throws -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let modelsDir = appSupport.appendingPathComponent("FluidAudio/Models", isDirectory: true)
-        let modelPath = modelsDir.appendingPathComponent(Repo.parakeetEou160.folderName)
-
-        let encoderPath = modelPath.appendingPathComponent("streaming_encoder.mlmodelc")
-        if FileManager.default.fileExists(atPath: encoderPath.path) {
-            log("LocalSTTProvider: Streaming models already cached")
-            return modelPath
-        }
-
-        let actuallyNeeded = [
-            ModelNames.ParakeetEOU.encoderFile,
-            ModelNames.ParakeetEOU.decoderFile,
-            ModelNames.ParakeetEOU.jointFile,
-            ModelNames.ParakeetEOU.vocab
-        ]
-
-        _ = try await DownloadUtils.loadModels(
-            .parakeetEou160,
-            modelNames: actuallyNeeded,
-            directory: modelsDir,
-            computeUnits: .cpuAndNeuralEngine
-        )
-
-        return modelPath
+        vad = nil
+        vadState = nil
     }
 }

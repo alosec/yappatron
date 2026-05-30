@@ -62,16 +62,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     var enableDualPassRefinement: Bool {
-        // Default ON for local mode: the instant Parakeet EOU stream is fast but
-        // lightly punctuated, so the TDT-v3 dual-pass adds punctuation and
-        // capitalization on each finished utterance. Cloud backends already
-        // return punctuated text and skip this (see returnsPunctuatedText).
-        get {
-            if UserDefaults.standard.object(forKey: "enableDualPassRefinement") == nil {
-                return true
-            }
-            return UserDefaults.standard.bool(forKey: "enableDualPassRefinement")
-        }
+        get { UserDefaults.standard.bool(forKey: "enableDualPassRefinement") }
         set { UserDefaults.standard.set(newValue, forKey: "enableDualPassRefinement") }
     }
 
@@ -580,7 +571,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         menu.addItem(statusMenuItem)
 
         // Show current backend
-        let backendLabel = NSMenuItem(title: "Backend: \(STTBackend.current.rawValue)", action: nil, keyEquivalent: "")
+        let backendLabel = NSMenuItem(title: "Backend: \(STTBackend.current.displayName)", action: nil, keyEquivalent: "")
         backendLabel.isEnabled = false
         menu.addItem(backendLabel)
 
@@ -702,7 +693,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let backendMenu = NSMenu()
 
         for backend in STTBackend.allCases {
-            let item = NSMenuItem(title: backend.rawValue, action: #selector(selectBackend(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: backend.displayName, action: #selector(selectBackend(_:)), keyEquivalent: "")
             item.representedObject = backend.rawValue
             item.state = (backend == STTBackend.current) ? .on : .off
             backendMenu.addItem(item)
@@ -1434,7 +1425,7 @@ struct SettingsView: View {
             Section("About") {
                 Text("Yappatron")
                     .font(.headline)
-                Text("Voice dictation powered by Parakeet TDT, Deepgram, and OpenAI Realtime")
+                Text("Voice dictation powered by Nemotron, Deepgram, and OpenAI Realtime")
                     .foregroundStyle(.secondary)
             }
 
@@ -1460,7 +1451,7 @@ struct SettingsView: View {
             }
 
             Section("STT Backend") {
-                LabeledContent("Current", value: STTBackend.current.rawValue)
+                LabeledContent("Current", value: STTBackend.current.displayName)
                 Text("Change via the menu bar right-click menu")
                     .foregroundStyle(.secondary)
                     .font(.caption)

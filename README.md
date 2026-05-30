@@ -8,8 +8,7 @@ Yappatron is a voice dictation app that:
 
 - **🎙️ Streams in real-time** — Characters appear as you speak with cloud or local STT
 - **☁️ Cloud STT** — OpenAI Realtime (`gpt-realtime-whisper`) and Deepgram Nova-3
-- **🏠 Local STT** — Optional fully local mode via Parakeet (Neural Engine, nothing leaves your machine)
-- **✨ Dual-pass refinement** — Optional enhanced accuracy for local mode
+- **🏠 Local STT** — Optional fully local mode via Nemotron (Neural Engine, nothing leaves your machine)
 - **🎨 Beautiful visualizations** — Psychedelic orb animations respond to your voice
 - **⚡ Hands-free operation** — Optional auto-send for AI assistants and command-line tools
 - **🎙️ Dictation modes** — Always-on listening by default, with configurable push-to-talk for noisy spaces
@@ -52,10 +51,10 @@ cd yappatron
 - **5.26% WER**: Best-in-class accuracy
 - **$200 free credit**: Months of free use on signup
 
-### Local STT (Parakeet)
-- **Parakeet EOU 120M**: Fast, accurate streaming ASR (~5.73% WER)
-- **100% on-device**: Nothing leaves your machine
-- **Optional dual-pass**: Enable batch refinement for punctuation & improved accuracy
+### Local STT (Nemotron)
+- **Nemotron Speech Streaming 0.6B**: Fast streaming ASR with inline punctuation & capitalization
+- **Silero VAD gating**: Neural voice-activity detection so silence/noise never reaches the model (no hallucinated phantoms)
+- **100% on-device**: Runs on the Neural Engine, nothing leaves your machine
 
 ### Swappable Backends
 Switch between OpenAI Realtime, Deepgram, and local STT via the menu bar. API keys are stored in app preferences.
