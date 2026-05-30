@@ -2,7 +2,63 @@
 
 **Last Updated:** 2026-05-29
 
-## Local STT upgrade: 160ms EOU stream + default punctuation dual-pass (2026-05-29)
+## Local STT rewrite: Nemotron 0.6B + Silero VAD (2026-05-29, evening)
+
+Shipped. Local mode no longer uses Parakeet EOU 120M. After live testing
+showed the 120M model was fast but unpunctuated and only accurate when
+yelling at it, and that the dual-pass approach (rewrite-after-finish) was
+not what was wanted ("I wanted it instant"), the local provider was
+rewritten end to end:
+
+- **Model:** NVIDIA **Nemotron Speech Streaming 0.6B** via FluidAudio's
+  `StreamingNemotronAsrManager`, 160ms cache-aware chunks, on the Neural
+  Engine. Punctuates + capitalizes **inline as it streams** — no second
+  pass. Live-tested as "extremely good," close to the OpenAI Realtime
+  feel the user loves, fully local.
+- **VAD gate:** FluidAudio **Silero neural VAD** (`VadManager`, streaming
+  `processStreamingChunk`, threshold 0.85). Nemotron fed silence
+  hallucinates phantom phrases ("Thank you.", "you"). A hand-rolled RMS
+  gate was NOT enough — the mic noise floor tripped it. Silero gates by
+  learned speech probability: the ASR only sees audio between
+  `.speechStart` and `.speechEnd`, and `.speechEnd` drives utterance
+  finalization (replacing the old EOU model's built-in end detection).
+- **Dual-pass removed** as the punctuation path. Code default reverted,
+  key turned off.
+- **Relabel:** backend "Local (Parakeet)" → "Local (Nemotron)" via a new
+  `STTBackend.displayName` (rawValue kept stable so persisted prefs don't
+  break). README + website copy updated; menu, footer, settings, and
+  about strings now say Nemotron.
+
+Gotchas hit and fixed:
+- FluidAudio 0.14.7's Nemotron 160ms auto-download landed **incomplete**
+  (only encoder+decoder, missing preprocessor/joint), causing "failed to
+  load model." Fixed by fetching the full model set directly from
+  HuggingFace into `~/Library/Application Support/FluidAudio/Models/
+  nemotron-streaming/160ms/`. Worth pre-bundling or adding a complete-set
+  check before relying on the in-app downloader.
+- Text was **doubling** ("BroBro") — turned out to be **two app
+  instances** running at once (a stray `open` + tmux launch), not a code
+  bug. Always quit+pkill before relaunch; verify `pgrep -x Yappatron` == 1.
+
+Validation:
+- `./scripts/build-app.sh` clean; installed to `/Applications`, single
+  instance relaunched.
+- Live dictation: punctuation + capitalization inline, accurate at normal
+  volume, no silence phantoms, no doubling. User confirmed "extremely
+  good."
+- Commit `5bc45de` pushed to `alosec/yappatron` main.
+- Website rebuilt + deployed from **tiny-bat** to Cloudflare Pages
+  (`yappatron.pages.dev`); live copy confirmed showing Nemotron.
+
+Next A/B if ever needed: **Qwen3-ASR 0.6B** (same provider, ~one-line
+swap) for even higher accuracy.
+
+## Local STT upgrade: 160ms EOU stream + default punctuation dual-pass (2026-05-29) — SUPERSEDED
+
+Superseded same day by the Nemotron + Silero VAD rewrite above. The EOU
+160ms + dual-pass approach was committed (`36c7798`) but the dual-pass
+punctuation path was the wrong UX (rewrite-after-finish, not instant), so
+it was replaced. Kept here for history.
 
 Acted on the long-standing "Model currency" item. The local instant
 stream was Parakeet **EOU 120M at 320ms** chunks — fast but lightly
