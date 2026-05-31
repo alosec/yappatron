@@ -1,8 +1,14 @@
 # Blockers
 
-**Last Updated:** 2026-05-02
+**Last Updated:** 2026-05-31
 
 ## Active Blockers
+
+### Background Music Prevents EOU Completion — P0
+- **Problem:** During the Troublemaker/Yappatron live demo path, any music/audio playing appears to keep Yappatron from finishing EOU. The practical result is that webhook delivery can stall because the app keeps waiting for the utterance to end.
+- **Observed context:** Reproduced while using Yappatron to drive a local Troublemaker webhook demo involving Spotify. The agent itself was coming along, but music playback interfered with Yappatron's end-of-utterance completion.
+- **Likely shape:** The EOU/speech-gate path is treating background music as continuing audio activity, or otherwise not separating speech probability from non-speech/music energy. EOU should be driven by detected speech ending, not by generic loudness or ongoing playback.
+- **Next investigation:** Reproduce with Spotify/music playing, inspect Local/Nemotron + Silero VAD finalization behavior and any Deepgram/local silence timers, then make background music stop resetting or blocking EOU unless speech is actually detected.
 
 ### iPhone First-Run Transcription Validation — P0
 - **Problem:** Local mode is implemented but not yet user-validated on device.
