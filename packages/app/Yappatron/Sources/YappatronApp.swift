@@ -627,9 +627,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             menu.addItem(webhookStatusItem)
         }
 
-        // Capture system audio (FaceTime, Zoom, browser, etc.) via ScreenCaptureKit
-        let systemAudioItem = NSMenuItem(title: "Capture System Audio (Experimental)", action: #selector(toggleSystemAudioCapture), keyEquivalent: "")
-        systemAudioItem.state = UserDefaults.standard.bool(forKey: "captureSystemAudio") ? .on : .off
+        let systemAudioItem: NSMenuItem
+        if #available(macOS 13.0, *) {
+            systemAudioItem = NSMenuItem(title: "Capture System Audio (Experimental)", action: #selector(toggleSystemAudioCapture), keyEquivalent: "")
+            systemAudioItem.state = UserDefaults.standard.bool(forKey: "captureSystemAudio") ? .on : .off
+        } else {
+            systemAudioItem = NSMenuItem(title: "Capture System Audio (Requires macOS 13)", action: nil, keyEquivalent: "")
+            systemAudioItem.isEnabled = false
+            systemAudioItem.state = .off
+        }
         menu.addItem(systemAudioItem)
 
         // Only show dual-pass option for local backend
@@ -645,25 +651,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             labelsItem.state = SpeakerLabelMap.enabled ? .on : .off
             menu.addItem(labelsItem)
 
-            // Enrolled speakers submenu (hybrid override layer)
-            let enrolledItem = NSMenuItem(title: "Enrolled Speakers (Hybrid)", action: nil, keyEquivalent: "")
-            let enrolledMenu = NSMenu()
-            let enrolledList = SpeakerRegistry.loadAll()
-            if enrolledList.isEmpty {
-                let placeholder = NSMenuItem(title: "(No enrolled speakers)", action: nil, keyEquivalent: "")
-                placeholder.isEnabled = false
-                enrolledMenu.addItem(placeholder)
-            } else {
-                for sp in enrolledList {
-                    let item = NSMenuItem(title: "Remove '\(sp.name)'", action: #selector(removeEnrolledSpeaker(_:)), keyEquivalent: "")
-                    item.representedObject = sp.id
-                    enrolledMenu.addItem(item)
+            if STTBackend.supportsLocalBackend {
+                // Enrolled speakers submenu (hybrid override layer)
+                let enrolledItem = NSMenuItem(title: "Enrolled Speakers (Hybrid)", action: nil, keyEquivalent: "")
+                let enrolledMenu = NSMenu()
+                let enrolledList = SpeakerRegistry.loadAll()
+                if enrolledList.isEmpty {
+                    let placeholder = NSMenuItem(title: "(No enrolled speakers)", action: nil, keyEquivalent: "")
+                    placeholder.isEnabled = false
+                    enrolledMenu.addItem(placeholder)
+                } else {
+                    for sp in enrolledList {
+                        let item = NSMenuItem(title: "Remove '\(sp.name)'", action: #selector(removeEnrolledSpeaker(_:)), keyEquivalent: "")
+                        item.representedObject = sp.id
+                        enrolledMenu.addItem(item)
+                    }
                 }
+                enrolledMenu.addItem(NSMenuItem.separator())
+                enrolledMenu.addItem(NSMenuItem(title: "Enroll New Speaker…", action: #selector(enrollNewSpeaker), keyEquivalent: ""))
+                enrolledItem.submenu = enrolledMenu
+                menu.addItem(enrolledItem)
             }
-            enrolledMenu.addItem(NSMenuItem.separator())
-            enrolledMenu.addItem(NSMenuItem(title: "Enroll New Speaker…", action: #selector(enrollNewSpeaker), keyEquivalent: ""))
-            enrolledItem.submenu = enrolledMenu
-            menu.addItem(enrolledItem)
 
             let nameItem = NSMenuItem(title: "Name Speakers", action: nil, keyEquivalent: "")
             let nameMenu = NSMenu()
@@ -692,7 +700,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let backendItem = NSMenuItem(title: "STT Backend", action: nil, keyEquivalent: "")
         let backendMenu = NSMenu()
 
-        for backend in STTBackend.allCases {
+        for backend in STTBackend.availableCases {
             let item = NSMenuItem(title: backend.displayName, action: #selector(selectBackend(_:)), keyEquivalent: "")
             item.representedObject = backend.rawValue
             item.state = (backend == STTBackend.current) ? .on : .off
@@ -1119,6 +1127,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     @objc func toggleSystemAudioCapture() {
+        guard #available(macOS 13.0, *) else {
+            let alert = NSAlert()
+            alert.messageText = "System Audio Capture Unavailable"
+            alert.informativeText = "Capturing system audio requires macOS 13 or newer. Microphone dictation remains available on macOS 12 Monterey."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
         let key = "captureSystemAudio"
         let newValue = !UserDefaults.standard.bool(forKey: key)
         UserDefaults.standard.set(newValue, forKey: key)
@@ -1272,7 +1290,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     @objc func selectBackend(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
-              let backend = STTBackend(rawValue: rawValue) else { return }
+              let backend = STTBackend(rawValue: rawValue),
+              backend.isAvailable else { return }
 
         guard backend != STTBackend.current else { return }
 
@@ -1430,10 +1449,10 @@ struct SettingsView: View {
             }
 
             Section("Shortcuts") {
-                LabeledContent("Toggle Pause", value: "⌘ Escape")
-                LabeledContent("Toggle Indicator", value: "⌥ Space")
-                LabeledContent("Input Focus Lock", value: HotKeyPreferences.displayString(for: HotKeyPreferences.inputFocusLockCombo))
-                LabeledContent("Push to Talk", value: pushToTalkShortcut)
+                SettingsRow(title: "Toggle Pause", value: "⌘ Escape")
+                SettingsRow(title: "Toggle Indicator", value: "⌥ Space")
+                SettingsRow(title: "Input Focus Lock", value: HotKeyPreferences.displayString(for: HotKeyPreferences.inputFocusLockCombo))
+                SettingsRow(title: "Push to Talk", value: pushToTalkShortcut)
                 Button("Configure Push-to-Talk Shortcut...") {
                     let currentCombo = HotKeyPreferences.pushToTalkCombo
                     guard let combo = ShortcutRecorderDialog.runModal(currentCombo: currentCombo) else { return }
@@ -1443,15 +1462,15 @@ struct SettingsView: View {
             }
 
             Section("Dictation") {
-                LabeledContent("Mode", value: DictationMode.current.title)
-                LabeledContent("Indicator", value: UserDefaults.standard.string(forKey: "indicatorStyle") ?? OverlayViewModel.OrbStyle.voronoi.rawValue)
+                SettingsRow(title: "Mode", value: DictationMode.current.title)
+                SettingsRow(title: "Indicator", value: UserDefaults.standard.string(forKey: "indicatorStyle") ?? OverlayViewModel.OrbStyle.voronoi.rawValue)
                 Text("Change mode via the menu bar right-click menu")
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
 
             Section("STT Backend") {
-                LabeledContent("Current", value: STTBackend.current.displayName)
+                SettingsRow(title: "Current", value: STTBackend.current.displayName)
                 Text("Change via the menu bar right-click menu")
                     .foregroundStyle(.secondary)
                     .font(.caption)
@@ -1465,7 +1484,21 @@ struct SettingsView: View {
                     .font(.caption)
             }
         }
-        .formStyle(.grouped)
         .frame(width: 440, height: 500)
+    }
+}
+
+private struct SettingsRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+            Spacer()
+            Text(value)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.trailing)
+        }
     }
 }

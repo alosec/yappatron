@@ -20,14 +20,46 @@ enum STTBackend: String, CaseIterable {
     /// UserDefaults key
     static let defaultsKey = "sttBackend"
 
+    static var supportsLocalBackend: Bool {
+        #if YAPPATRON_ENABLE_FLUIDAUDIO
+        true
+        #else
+        false
+        #endif
+    }
+
+    static var availableCases: [STTBackend] {
+        allCases.filter(\.isAvailable)
+    }
+
+    static var defaultBackend: STTBackend {
+        supportsLocalBackend ? .local : .openAIRealtime
+    }
+
     /// Get the currently selected backend
     static var current: STTBackend {
         get {
-            let raw = UserDefaults.standard.string(forKey: defaultsKey) ?? "local"
-            return STTBackend(rawValue: raw) ?? .local
+            let raw = UserDefaults.standard.string(forKey: defaultsKey) ?? defaultBackend.rawValue
+            guard let backend = STTBackend(rawValue: raw), backend.isAvailable else {
+                return defaultBackend
+            }
+            return backend
         }
         set {
+            guard newValue.isAvailable else {
+                UserDefaults.standard.set(defaultBackend.rawValue, forKey: defaultsKey)
+                return
+            }
             UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)
+        }
+    }
+
+    var isAvailable: Bool {
+        switch self {
+        case .local:
+            return STTBackend.supportsLocalBackend
+        case .deepgram, .openAIRealtime:
+            return true
         }
     }
 

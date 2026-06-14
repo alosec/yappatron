@@ -1,9 +1,7 @@
 import Foundation
-import FluidAudio
 import AVFoundation
 import Combine
 import Accelerate
-import CoreML
 
 // Simple print-based logging for debugging
 func log(_ message: String) {
@@ -584,8 +582,13 @@ class TranscriptionEngine: ObservableObject {
         let captureSystemAudio = UserDefaults.standard.bool(forKey: "captureSystemAudio")
         let source: AudioCaptureSource
         if captureSystemAudio {
-            log("Audio capture mode: MIXED (mic + system audio via ScreenCaptureKit)")
-            source = MixedAudioSource(mic: MicAudioSource(), system: SystemAudioSource())
+            if #available(macOS 13.0, *) {
+                log("Audio capture mode: MIXED (mic + system audio via ScreenCaptureKit)")
+                source = MixedAudioSource(mic: MicAudioSource(), system: SystemAudioSource())
+            } else {
+                log("System audio capture requires macOS 13 or newer; falling back to MIC only")
+                source = MicAudioSource()
+            }
         } else {
             log("Audio capture mode: MIC only")
             source = MicAudioSource()

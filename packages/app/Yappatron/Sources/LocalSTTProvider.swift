@@ -1,7 +1,11 @@
 import Foundation
+#if YAPPATRON_ENABLE_FLUIDAUDIO
 import FluidAudio
 import AVFoundation
 import CoreML
+#else
+import AVFoundation
+#endif
 
 /// Local Nemotron-based streaming STT provider, gated by Silero VAD.
 ///
@@ -21,6 +25,7 @@ import CoreML
 /// - A short pre-roll of buffers is flushed on `.speechStart` so the first
 ///   word isn't clipped.
 /// - `.speechEnd` finalizes the utterance and emits the punctuated final.
+#if YAPPATRON_ENABLE_FLUIDAUDIO
 class LocalSTTProvider: STTProvider {
     private var streamingManager: StreamingNemotronAsrManager?
     private var vad: VadManager?
@@ -163,3 +168,33 @@ class LocalSTTProvider: STTProvider {
         vadState = nil
     }
 }
+#else
+class LocalSTTProvider: STTProvider {
+    var onPartial: ((String) -> Void)?
+    var onFinal: ((String) -> Void)?
+    var onLockedTextAdvanced: ((Int) -> Void)?
+    var onDiarizedFinal: (([(speakerId: Int, text: String, startSec: Double, endSec: Double)]) -> Void)?
+
+    func start() async throws {
+        throw NSError(
+            domain: "LocalSTTProvider",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Local STT requires a FluidAudio-enabled macOS 14 build."]
+        )
+    }
+
+    func processAudio(_ buffer: AVAudioPCMBuffer) async throws {}
+
+    func finishCurrentUtterance() async throws -> String? {
+        nil
+    }
+
+    func finish() async throws -> String? {
+        nil
+    }
+
+    func reset() async {}
+
+    func cleanup() {}
+}
+#endif

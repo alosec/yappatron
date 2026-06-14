@@ -1,15 +1,6 @@
 {
   "pins" : [
     {
-      "identity" : "fluidaudio",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/FluidInference/FluidAudio.git",
-      "state" : {
-        "revision" : "8048812869b0c7c6fa393e564a4fb6f95126ba23",
-        "version" : "0.14.7"
-      }
-    },
-    {
       "identity" : "hotkey",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/soffes/HotKey.git",

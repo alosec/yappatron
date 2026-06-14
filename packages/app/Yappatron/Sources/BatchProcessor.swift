@@ -1,9 +1,13 @@
 import Foundation
+
+#if YAPPATRON_ENABLE_FLUIDAUDIO
 import FluidAudio
 import CoreML
+#endif
 
 /// Thread-safe batch ASR processor using Parakeet TDT 0.6b
 /// Provides higher accuracy and punctuation/capitalization output
+#if YAPPATRON_ENABLE_FLUIDAUDIO
 actor BatchProcessor {
 
     enum Status: Equatable {
@@ -76,3 +80,33 @@ actor BatchProcessor {
         return result.text
     }
 }
+#else
+actor BatchProcessor {
+
+    enum Status: Equatable {
+        case uninitialized
+        case downloading
+        case ready
+        case error(String)
+    }
+
+    private(set) var status: Status = .uninitialized
+
+    func initialize() async throws {
+        status = .error("FluidAudio unavailable")
+        throw NSError(
+            domain: "BatchProcessor",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Dual-pass local refinement requires a FluidAudio-enabled macOS 14 build."]
+        )
+    }
+
+    func transcribe(_ samples: [Float]) async throws -> String {
+        throw NSError(
+            domain: "BatchProcessor",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Dual-pass local refinement requires a FluidAudio-enabled macOS 14 build."]
+        )
+    }
+}
+#endif

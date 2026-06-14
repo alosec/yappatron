@@ -8,6 +8,7 @@ import CoreMedia
 /// PCM buffers. Yappatron's window is excluded so it can't capture itself.
 ///
 /// Requires Screen Recording permission (granted via macOS TCC).
+@available(macOS 13.0, *)
 final class SystemAudioSource: NSObject, AudioCaptureSource, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
 
     private var stream: SCStream?
