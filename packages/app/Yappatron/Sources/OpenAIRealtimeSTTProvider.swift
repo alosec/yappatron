@@ -6,7 +6,10 @@ import AVFoundation
 /// expects 24 kHz mono 16-bit little-endian PCM, so buffers are resampled here.
 class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
     private static let transcriptionModel = "gpt-realtime-whisper"
+    private static let diarizationModel = "gpt-4o-transcribe-diarize"
     private static let inputSampleRate = 24_000.0
+    private static let diarizationRequestTimeout: TimeInterval = 8.0
+    private static let minimumDiarizationDurationSec = 0.75
 
     private var webSocketTask: URLSessionWebSocketTask?
     private var session: URLSession?
@@ -21,12 +24,19 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
     private var hasBufferedAudio = false
     private var hasDetectedSpeech = false
     private var isCommitInFlight = false
+    private var streamAudioCursorSec = 0.0
+    private var currentCommitAudio = Data()
+    private var currentCommitStartSec: Double?
+    private var pendingCommitAudio: [BufferedCommitAudio] = []
+    private var committedAudioByItemID: [String: BufferedCommitAudio] = [:]
 
     private var eouTimer: Task<Void, Never>?
     private var silenceCommitTask: Task<Void, Never>?
     private var finalizeContinuation: CheckedContinuation<String?, Never>?
+    private let finalizeLock = NSLock()
     private var finalizeTimeoutTask: Task<Void, Never>?
     private var sessionReadyContinuation: CheckedContinuation<Bool, Never>?
+    private let sessionReadyLock = NSLock()
     private var isSessionConfigured = false
     private let eouDebounceMs: UInt64 = 1500
     private let speechRMSFloor: Float = 0.0045
@@ -41,11 +51,28 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
         self.apiKey = apiKey
     }
 
+    private struct BufferedCommitAudio {
+        let pcm16Data: Data
+        let sampleRate: Int
+        let startSec: Double
+
+        var durationSec: Double {
+            let sampleCount = pcm16Data.count / MemoryLayout<Int16>.size
+            return Double(sampleCount) / Double(sampleRate)
+        }
+    }
+
     func start() async throws {
         guard !apiKey.isEmpty else {
             throw NSError(domain: "OpenAIRealtimeSTTProvider", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "OpenAI API key not set"])
         }
+
+        streamAudioCursorSec = 0
+        currentCommitAudio = Data()
+        currentCommitStartSec = nil
+        pendingCommitAudio = []
+        committedAudioByItemID = [:]
 
         var components = URLComponents(string: "wss://api.openai.com/v1/realtime")!
         components.queryItems = [
@@ -95,6 +122,7 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
         let base64Audio = pcmData.base64EncodedString()
         let message = "{\"type\":\"input_audio_buffer.append\",\"audio\":\"\(base64Audio)\"}"
         try await ws.send(.string(message))
+        appendBufferedAudioForDiarization(pcmData)
         hasBufferedAudio = true
         updateLocalCommitState(from: buffer)
     }
@@ -108,12 +136,17 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
         }
 
         return await withCheckedContinuation { continuation in
-            finalizeContinuation?.resume(returning: takePendingUtterance())
-            finalizeContinuation = continuation
+            let previousContinuation = finalizeLock.withLock {
+                let previous = finalizeContinuation
+                finalizeContinuation = continuation
+                return previous
+            }
+            previousContinuation?.resume(returning: takePendingUtterance())
 
             finalizeTimeoutTask?.cancel()
+            let timeoutNanoseconds: UInt64 = SpeakerLabelMap.enabled ? 9_000_000_000 : 2_500_000_000
             finalizeTimeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 self?.completeFinalize()
             }
 
@@ -143,8 +176,12 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
         silenceCommitTask = nil
         finalizeTimeoutTask?.cancel()
         finalizeTimeoutTask = nil
-        finalizeContinuation?.resume(returning: nil)
-        finalizeContinuation = nil
+        let continuation = finalizeLock.withLock {
+            let current = finalizeContinuation
+            finalizeContinuation = nil
+            return current
+        }
+        continuation?.resume(returning: nil)
     }
 
     func cleanup() {
@@ -153,11 +190,24 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
         eouTimer?.cancel()
         silenceCommitTask?.cancel()
         finalizeTimeoutTask?.cancel()
+        let finalizeContinuation = finalizeLock.withLock {
+            let current = self.finalizeContinuation
+            self.finalizeContinuation = nil
+            return current
+        }
         finalizeContinuation?.resume(returning: nil)
-        finalizeContinuation = nil
+        let sessionReadyContinuation = sessionReadyLock.withLock {
+            let current = self.sessionReadyContinuation
+            self.sessionReadyContinuation = nil
+            isSessionConfigured = false
+            return current
+        }
         sessionReadyContinuation?.resume(returning: false)
-        sessionReadyContinuation = nil
-        isSessionConfigured = false
+        currentCommitAudio = Data()
+        currentCommitStartSec = nil
+        pendingCommitAudio = []
+        committedAudioByItemID = [:]
+        streamAudioCursorSec = 0
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         session?.invalidateAndCancel()
@@ -195,26 +245,39 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
 
     private func waitForSessionReady(timeout: TimeInterval) async -> Bool {
         await withCheckedContinuation { continuation in
-            if isSessionConfigured {
+            let shouldResumeImmediately = sessionReadyLock.withLock {
+                if isSessionConfigured {
+                    return true
+                }
+
+                self.sessionReadyContinuation = continuation
+                return false
+            }
+
+            if shouldResumeImmediately {
                 continuation.resume(returning: true)
                 return
             }
 
-            self.sessionReadyContinuation = continuation
-
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
-                if let continuation = self?.sessionReadyContinuation {
+                let continuation = self?.sessionReadyLock.withLock { () -> CheckedContinuation<Bool, Never>? in
+                    guard let continuation = self?.sessionReadyContinuation else { return nil }
                     self?.sessionReadyContinuation = nil
-                    continuation.resume(returning: false)
+                    return continuation
                 }
+                continuation?.resume(returning: false)
             }
         }
     }
 
     private func markSessionReady(_ ready: Bool) {
-        isSessionConfigured = ready
-        sessionReadyContinuation?.resume(returning: ready)
-        sessionReadyContinuation = nil
+        let continuation = sessionReadyLock.withLock {
+            isSessionConfigured = ready
+            let current = sessionReadyContinuation
+            sessionReadyContinuation = nil
+            return current
+        }
+        continuation?.resume(returning: ready)
     }
 
     // MARK: - WebSocket Send/Receive
@@ -239,10 +302,21 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
         silenceCommitTask?.cancel()
         silenceCommitTask = nil
 
-        try await sendJSON([
-            "type": "input_audio_buffer.commit",
-            "event_id": "commit_\(UUID().uuidString)"
-        ])
+        let committedAudio = takeBufferedAudioForCommit()
+
+        do {
+            try await sendJSON([
+                "type": "input_audio_buffer.commit",
+                "event_id": "commit_\(UUID().uuidString)"
+            ])
+
+            if let committedAudio {
+                pendingCommitAudio.append(committedAudio)
+            }
+        } catch {
+            restoreBufferedAudioForCommit(committedAudio)
+            throw error
+        }
     }
 
     private func startReceiving() {
@@ -295,8 +369,13 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
             markSessionReady(true)
         case "input_audio_buffer.committed":
             isCommitInFlight = false
-            if let itemID = json["item_id"] as? String, currentItemID == nil {
-                currentItemID = itemID
+            if let itemID = json["item_id"] as? String {
+                if currentItemID == nil {
+                    currentItemID = itemID
+                }
+                if !pendingCommitAudio.isEmpty {
+                    committedAudioByItemID[itemID] = pendingCommitAudio.removeFirst()
+                }
             }
         case "conversation.item.input_audio_transcription.delta":
             handleTranscriptionDelta(json)
@@ -343,12 +422,27 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
         eouTimer?.cancel()
         eouTimer = nil
 
-        if finalizeContinuation != nil {
-            completeFinalize(with: finalText)
+        let committedAudio = takeCommittedAudio(for: itemID)
+        if hasFinalizeContinuation {
+            Task { [weak self] in
+                guard let self = self else { return }
+                let runs = await self.diarizeCommittedAudio(committedAudio)
+                guard self.hasFinalizeContinuation else { return }
+                if !runs.isEmpty {
+                    await MainActor.run {
+                        self.onDiarizedFinal?(runs)
+                    }
+                }
+                self.completeFinalize(with: finalText)
+            }
             return
         }
 
-        dispatchFinal(finalText)
+        Task { [weak self] in
+            guard let self = self else { return }
+            let runs = await self.diarizeCommittedAudio(committedAudio)
+            self.dispatchFinal(finalText, diarizedRuns: runs)
+        }
     }
 
     private func handleTranscriptionFailed(_ json: [String: Any]) {
@@ -421,11 +515,17 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
         }
     }
 
-    private func dispatchFinal(_ text: String) {
+    private func dispatchFinal(
+        _ text: String,
+        diarizedRuns: [(speakerId: Int, text: String, startSec: Double, endSec: Double)] = []
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         DispatchQueue.main.async { [weak self] in
+            if !diarizedRuns.isEmpty {
+                self?.onDiarizedFinal?(diarizedRuns)
+            }
             self?.onLockedTextAdvanced?(trimmed.count)
             self?.onPartial?(trimmed)
             self?.onFinal?(trimmed)
@@ -449,14 +549,295 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
         finalizeTimeoutTask?.cancel()
         finalizeTimeoutTask = nil
 
-        guard let continuation = finalizeContinuation else { return }
-        finalizeContinuation = nil
+        let continuation = finalizeLock.withLock {
+            let current = finalizeContinuation
+            finalizeContinuation = nil
+            return current
+        }
+        guard let continuation else { return }
 
         let finalText = text ?? takePendingUtterance()
         if text != nil {
             _ = takePendingUtterance()
         }
         continuation.resume(returning: finalText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? finalText : nil)
+    }
+
+    private var hasFinalizeContinuation: Bool {
+        finalizeLock.withLock {
+            finalizeContinuation != nil
+        }
+    }
+
+    // MARK: - Diarization Fallback
+
+    private func appendBufferedAudioForDiarization(_ pcmData: Data) {
+        guard !pcmData.isEmpty else { return }
+
+        if currentCommitAudio.isEmpty {
+            currentCommitStartSec = streamAudioCursorSec
+        }
+
+        currentCommitAudio.append(pcmData)
+        let sampleCount = pcmData.count / MemoryLayout<Int16>.size
+        streamAudioCursorSec += Double(sampleCount) / Self.inputSampleRate
+    }
+
+    private func takeBufferedAudioForCommit() -> BufferedCommitAudio? {
+        guard !currentCommitAudio.isEmpty else { return nil }
+
+        let audio = BufferedCommitAudio(
+            pcm16Data: currentCommitAudio,
+            sampleRate: Int(Self.inputSampleRate),
+            startSec: currentCommitStartSec ?? max(0, streamAudioCursorSec)
+        )
+
+        currentCommitAudio = Data()
+        currentCommitStartSec = nil
+        return audio
+    }
+
+    private func restoreBufferedAudioForCommit(_ audio: BufferedCommitAudio?) {
+        guard let audio else { return }
+
+        if currentCommitAudio.isEmpty {
+            currentCommitAudio = audio.pcm16Data
+            currentCommitStartSec = audio.startSec
+        } else {
+            var restored = audio.pcm16Data
+            restored.append(currentCommitAudio)
+            currentCommitAudio = restored
+            currentCommitStartSec = audio.startSec
+        }
+        hasBufferedAudio = true
+    }
+
+    private func takeCommittedAudio(for itemID: String?) -> BufferedCommitAudio? {
+        if let itemID, let audio = committedAudioByItemID.removeValue(forKey: itemID) {
+            return audio
+        }
+
+        if !pendingCommitAudio.isEmpty {
+            return pendingCommitAudio.removeFirst()
+        }
+
+        return nil
+    }
+
+    private func diarizeCommittedAudio(
+        _ audio: BufferedCommitAudio?
+    ) async -> [(speakerId: Int, text: String, startSec: Double, endSec: Double)] {
+        guard let audio,
+              onDiarizedFinal != nil,
+              SpeakerLabelMap.enabled,
+              audio.durationSec >= Self.minimumDiarizationDurationSec else {
+            return []
+        }
+
+        do {
+            let wavData = Self.wavData(fromPCM16: audio.pcm16Data, sampleRate: audio.sampleRate)
+            let request = try makeDiarizationRequest(wavData: wavData)
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let http = response as? HTTPURLResponse else {
+                log("OpenAIRealtimeSTTProvider: Diarization failed without HTTP response")
+                return []
+            }
+
+            guard (200..<300).contains(http.statusCode) else {
+                let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+                log("OpenAIRealtimeSTTProvider: Diarization HTTP \(http.statusCode): \(body.prefix(500))")
+                return []
+            }
+
+            let runs = parseDiarizationResponse(data, baseStartSec: audio.startSec)
+            if runs.isEmpty {
+                log("OpenAIRealtimeSTTProvider: Diarization returned no speaker segments")
+            }
+            return runs
+        } catch {
+            log("OpenAIRealtimeSTTProvider: Diarization failed: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    private func makeDiarizationRequest(wavData: Data) throws -> URLRequest {
+        guard let url = URL(string: "https://api.openai.com/v1/audio/transcriptions") else {
+            throw NSError(domain: "OpenAIRealtimeSTTProvider", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: "Invalid OpenAI transcription URL"])
+        }
+
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: url, timeoutInterval: Self.diarizationRequestTimeout)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        Self.appendMultipartField(name: "model", value: Self.diarizationModel, boundary: boundary, to: &body)
+        Self.appendMultipartField(name: "response_format", value: "diarized_json", boundary: boundary, to: &body)
+        Self.appendMultipartField(name: "chunking_strategy", value: "auto", boundary: boundary, to: &body)
+        Self.appendMultipartField(name: "language", value: "en", boundary: boundary, to: &body)
+        Self.appendMultipartFile(
+            name: "file",
+            filename: "yappatron-utterance.wav",
+            contentType: "audio/wav",
+            data: wavData,
+            boundary: boundary,
+            to: &body
+        )
+        Self.appendUTF8("--\(boundary)--\r\n", to: &body)
+
+        request.httpBody = body
+        return request
+    }
+
+    private func parseDiarizationResponse(
+        _ data: Data,
+        baseStartSec: Double
+    ) -> [(speakerId: Int, text: String, startSec: Double, endSec: Double)] {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let segments = json["segments"] as? [[String: Any]] else {
+            return []
+        }
+
+        var speakerIDsByRawValue: [String: Int] = [:]
+        var runs: [(speakerId: Int, text: String, startSec: Double, endSec: Double)] = []
+
+        for segment in segments {
+            let text = (segment["text"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+
+            let speakerId = speakerID(from: segment["speaker"], mapping: &speakerIDsByRawValue)
+            let start = Self.doubleValue(segment["start"]) ?? 0
+            let end = Self.doubleValue(segment["end"]) ?? start
+            let runStart = baseStartSec + max(0, start)
+            let runEnd = baseStartSec + max(start, end)
+
+            if var last = runs.last, last.speakerId == speakerId {
+                last.text += " " + text
+                last.endSec = max(last.endSec, runEnd)
+                runs[runs.count - 1] = last
+            } else {
+                runs.append((speakerId: speakerId, text: text, startSec: runStart, endSec: runEnd))
+            }
+        }
+
+        return runs
+    }
+
+    private func speakerID(from value: Any?, mapping: inout [String: Int]) -> Int {
+        if let intValue = value as? Int {
+            return intValue
+        }
+
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+
+        guard let raw = value as? String, !raw.isEmpty else {
+            return -1
+        }
+
+        if let existing = mapping[raw] {
+            return existing
+        }
+
+        if let parsed = Self.trailingInteger(in: raw) {
+            mapping[raw] = parsed
+            return parsed
+        }
+
+        let next = mapping.values.max().map { $0 + 1 } ?? 0
+        mapping[raw] = next
+        return next
+    }
+
+    private static func trailingInteger(in value: String) -> Int? {
+        let digits = value.reversed().prefix { $0.isNumber }.reversed()
+        guard !digits.isEmpty else { return nil }
+        return Int(String(digits))
+    }
+
+    private static func doubleValue(_ value: Any?) -> Double? {
+        if let double = value as? Double {
+            return double
+        }
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        if let string = value as? String {
+            return Double(string)
+        }
+        return nil
+    }
+
+    private static func appendMultipartField(
+        name: String,
+        value: String,
+        boundary: String,
+        to body: inout Data
+    ) {
+        appendUTF8("--\(boundary)\r\n", to: &body)
+        appendUTF8("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n", to: &body)
+        appendUTF8("\(value)\r\n", to: &body)
+    }
+
+    private static func appendMultipartFile(
+        name: String,
+        filename: String,
+        contentType: String,
+        data: Data,
+        boundary: String,
+        to body: inout Data
+    ) {
+        appendUTF8("--\(boundary)\r\n", to: &body)
+        appendUTF8("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n", to: &body)
+        appendUTF8("Content-Type: \(contentType)\r\n\r\n", to: &body)
+        body.append(data)
+        appendUTF8("\r\n", to: &body)
+    }
+
+    private static func wavData(fromPCM16 pcmData: Data, sampleRate: Int) -> Data {
+        var data = Data()
+        let byteRate = sampleRate * MemoryLayout<Int16>.size
+        let blockAlign = MemoryLayout<Int16>.size
+
+        appendUTF8("RIFF", to: &data)
+        appendUInt32LE(UInt32(36 + pcmData.count), to: &data)
+        appendUTF8("WAVE", to: &data)
+        appendUTF8("fmt ", to: &data)
+        appendUInt32LE(16, to: &data)
+        appendUInt16LE(1, to: &data)
+        appendUInt16LE(1, to: &data)
+        appendUInt32LE(UInt32(sampleRate), to: &data)
+        appendUInt32LE(UInt32(byteRate), to: &data)
+        appendUInt16LE(UInt16(blockAlign), to: &data)
+        appendUInt16LE(16, to: &data)
+        appendUTF8("data", to: &data)
+        appendUInt32LE(UInt32(pcmData.count), to: &data)
+        data.append(pcmData)
+
+        return data
+    }
+
+    private static func appendUTF8(_ string: String, to data: inout Data) {
+        data.append(contentsOf: string.utf8)
+    }
+
+    private static func appendUInt16LE(_ value: UInt16, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { bytes in
+            data.append(contentsOf: bytes)
+        }
+    }
+
+    private static func appendUInt32LE(_ value: UInt32, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { bytes in
+            data.append(contentsOf: bytes)
+        }
     }
 
     // MARK: - Audio Conversion
@@ -518,26 +899,35 @@ class OpenAIRealtimeSTTProvider: STTProvider, @unchecked Sendable {
 
 private class OpenAIRealtimeWebSocketDelegate: NSObject, URLSessionWebSocketDelegate {
     private var openContinuation: CheckedContinuation<Bool, Never>?
+    private let lock = NSLock()
     var lastError: String?
 
     func waitForOpen(timeout: TimeInterval) async -> Bool {
         await withCheckedContinuation { continuation in
-            self.openContinuation = continuation
+            lock.withLock {
+                self.openContinuation = continuation
+            }
 
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
-                if let continuation = self?.openContinuation {
+                let continuation = self?.lock.withLock { () -> CheckedContinuation<Bool, Never>? in
+                    guard let continuation = self?.openContinuation else { return nil }
                     self?.openContinuation = nil
                     self?.lastError = "Connection timed out after \(timeout)s"
-                    continuation.resume(returning: false)
+                    return continuation
                 }
+                continuation?.resume(returning: false)
             }
         }
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
         log("OpenAIRealtimeSTTProvider: WebSocket didOpen")
-        openContinuation?.resume(returning: true)
-        openContinuation = nil
+        let continuation = lock.withLock {
+            let current = openContinuation
+            openContinuation = nil
+            return current
+        }
+        continuation?.resume(returning: true)
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
@@ -556,7 +946,11 @@ private class OpenAIRealtimeWebSocketDelegate: NSObject, URLSessionWebSocketDele
             lastError = error.localizedDescription
         }
 
-        openContinuation?.resume(returning: false)
-        openContinuation = nil
+        let continuation = lock.withLock {
+            let current = openContinuation
+            openContinuation = nil
+            return current
+        }
+        continuation?.resume(returning: false)
     }
 }

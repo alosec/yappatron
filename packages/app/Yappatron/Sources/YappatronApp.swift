@@ -44,6 +44,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // State
     @Published var isPaused = false
     @Published var isPushToTalkHeld = false
+    var isPushToTalkFinishing = false
     @Published var currentTypedText = "" // What we've typed so far for append-only updates
     var lockedTextLength = 0             // Characters confirmed by is_final
     var lockedInputFocusTarget: InputSimulator.InputFocusTarget?
@@ -645,33 +646,46 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             menu.addItem(refinementItem)
         }
 
-        // Speaker Labels (Diarization) — Deepgram only
-        if STTBackend.current == .deepgram {
-            let labelsItem = NSMenuItem(title: "Speaker Labels (Diarization)", action: #selector(toggleSpeakerLabels), keyEquivalent: "")
-            labelsItem.state = SpeakerLabelMap.enabled ? .on : .off
-            menu.addItem(labelsItem)
+        // STT Backend submenu
+        let backendItem = NSMenuItem(title: "STT Backend", action: nil, keyEquivalent: "")
+        let backendMenu = NSMenu()
 
-            if STTBackend.supportsLocalBackend {
-                // Enrolled speakers submenu (hybrid override layer)
-                let enrolledItem = NSMenuItem(title: "Enrolled Speakers (Hybrid)", action: nil, keyEquivalent: "")
-                let enrolledMenu = NSMenu()
-                let enrolledList = SpeakerRegistry.loadAll()
-                if enrolledList.isEmpty {
-                    let placeholder = NSMenuItem(title: "(No enrolled speakers)", action: nil, keyEquivalent: "")
-                    placeholder.isEnabled = false
-                    enrolledMenu.addItem(placeholder)
-                } else {
-                    for sp in enrolledList {
-                        let item = NSMenuItem(title: "Remove '\(sp.name)'", action: #selector(removeEnrolledSpeaker(_:)), keyEquivalent: "")
-                        item.representedObject = sp.id
-                        enrolledMenu.addItem(item)
-                    }
+        for backend in STTBackend.availableCases {
+            let item = NSMenuItem(title: backend.displayName, action: #selector(selectBackend(_:)), keyEquivalent: "")
+            item.representedObject = backend.rawValue
+            item.state = (backend == STTBackend.current) ? .on : .off
+            backendMenu.addItem(item)
+        }
+
+        backendMenu.addItem(NSMenuItem.separator())
+
+        let labelsItem = NSMenuItem(title: "Speaker Labels (Diarization)", action: #selector(toggleSpeakerLabels), keyEquivalent: "")
+        labelsItem.state = SpeakerLabelMap.enabled ? .on : .off
+        labelsItem.isEnabled = STTBackend.current.supportsSpeakerLabels
+        backendMenu.addItem(labelsItem)
+
+        // Speaker management only works when the active backend can provide
+        // speaker-attributed runs.
+        if STTBackend.current.supportsSpeakerLabels {
+            // Enrolled speakers submenu (hybrid override layer)
+            let enrolledItem = NSMenuItem(title: "Enrolled Speakers (Hybrid)", action: nil, keyEquivalent: "")
+            let enrolledMenu = NSMenu()
+            let enrolledList = SpeakerRegistry.loadAll()
+            if enrolledList.isEmpty {
+                let placeholder = NSMenuItem(title: "(No enrolled speakers)", action: nil, keyEquivalent: "")
+                placeholder.isEnabled = false
+                enrolledMenu.addItem(placeholder)
+            } else {
+                for sp in enrolledList {
+                    let item = NSMenuItem(title: "Remove '\(sp.name)'", action: #selector(removeEnrolledSpeaker(_:)), keyEquivalent: "")
+                    item.representedObject = sp.id
+                    enrolledMenu.addItem(item)
                 }
-                enrolledMenu.addItem(NSMenuItem.separator())
-                enrolledMenu.addItem(NSMenuItem(title: "Enroll New Speaker…", action: #selector(enrollNewSpeaker), keyEquivalent: ""))
-                enrolledItem.submenu = enrolledMenu
-                menu.addItem(enrolledItem)
             }
+            enrolledMenu.addItem(NSMenuItem.separator())
+            enrolledMenu.addItem(NSMenuItem(title: "Enroll New Speaker…", action: #selector(enrollNewSpeaker), keyEquivalent: ""))
+            enrolledItem.submenu = enrolledMenu
+            backendMenu.addItem(enrolledItem)
 
             let nameItem = NSMenuItem(title: "Name Speakers", action: nil, keyEquivalent: "")
             let nameMenu = NSMenu()
@@ -691,20 +705,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             nameMenu.addItem(NSMenuItem.separator())
             nameMenu.addItem(NSMenuItem(title: "Reset All Names", action: #selector(resetSpeakerNames), keyEquivalent: ""))
             nameItem.submenu = nameMenu
-            menu.addItem(nameItem)
+            backendMenu.addItem(nameItem)
         }
 
-        menu.addItem(NSMenuItem.separator())
+        backendMenu.addItem(NSMenuItem.separator())
 
-        // STT Backend submenu
-        let backendItem = NSMenuItem(title: "STT Backend", action: nil, keyEquivalent: "")
-        let backendMenu = NSMenu()
-
-        for backend in STTBackend.availableCases {
-            let item = NSMenuItem(title: backend.displayName, action: #selector(selectBackend(_:)), keyEquivalent: "")
-            item.representedObject = backend.rawValue
-            item.state = (backend == STTBackend.current) ? .on : .off
-            backendMenu.addItem(item)
+        if STTBackend.supportsLocalBackend {
+            // Local Model submenu — which on-device model the Local backend runs.
+            let localModelItem = NSMenuItem(title: "Local Model", action: nil, keyEquivalent: "")
+            let localModelMenu = NSMenu()
+            for local in LocalModel.allCases {
+                let item = NSMenuItem(title: local.displayName, action: #selector(selectLocalModel(_:)), keyEquivalent: "")
+                item.representedObject = local.rawValue
+                item.state = (local == LocalModel.current) ? .on : .off
+                localModelMenu.addItem(item)
+            }
+            localModelItem.submenu = localModelMenu
+            backendMenu.addItem(localModelItem)
         }
 
         backendMenu.addItem(NSMenuItem.separator())
@@ -1012,7 +1029,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func beginPushToTalkCapture() {
-        guard dictationMode == .pushToTalk, !isPaused, !isPushToTalkHeld else { return }
+        guard dictationMode == .pushToTalk, !isPaused, !isPushToTalkHeld, !isPushToTalkFinishing else { return }
 
         isPushToTalkHeld = true
         engine.startCapture()
@@ -1022,9 +1039,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func endPushToTalkCapture() async {
-        guard dictationMode == .pushToTalk, isPushToTalkHeld else { return }
+        guard dictationMode == .pushToTalk, isPushToTalkHeld, !isPushToTalkFinishing else { return }
 
         isPushToTalkHeld = false
+        isPushToTalkFinishing = true
+        defer { isPushToTalkFinishing = false }
+
         engine.stopCapture()
         updateOverlayStatus()
         updateStatusIcon()
@@ -1041,6 +1061,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @objc func pauseAction() {
         isPaused = true
         isPushToTalkHeld = false
+        isPushToTalkFinishing = false
         engine.stopCapture()
         Task {
             await engine.finishCurrentUtterance()
@@ -1208,7 +1229,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Pause active transcription so the enrollment recorder owns the mic.
         let wasListening = engine.status == .listening
         if wasListening {
-            engine.stopCapture()
+            engine.stopCapture(releaseAudioSource: true)
         }
 
         let coordinator = EnrollSpeakerCoordinator()
@@ -1218,7 +1239,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 switch result {
                 case .success(let speaker):
                     alert.messageText = "Enrolled \(speaker.name)"
-                    alert.informativeText = "Voiceprint saved. Future utterances matching this voice will be labeled [\(speaker.name)] regardless of Deepgram's speaker ID."
+                    alert.informativeText = "Voiceprint saved. Future utterances matching this voice will be labeled [\(speaker.name)] regardless of the provider's speaker ID."
                     alert.alertStyle = .informational
                 case .failure(let err):
                     alert.messageText = "Enrollment failed"
@@ -1252,6 +1273,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         dictationMode = mode
         isPushToTalkHeld = false
+        isPushToTalkFinishing = false
 
         switch mode {
         case .alwaysOn:
@@ -1306,6 +1328,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         switchBackend(to: backend)
+    }
+
+    @objc func selectLocalModel(_ sender: NSMenuItem) {
+        guard STTBackend.supportsLocalBackend else { return }
+        guard let rawValue = sender.representedObject as? String,
+              let local = LocalModel(rawValue: rawValue) else { return }
+        guard local != LocalModel.current else { return }
+
+        UserDefaults.standard.set(local.rawValue, forKey: "localModel")
+        _ = UserDefaults.standard.synchronize()
+
+        // The model is loaded in the provider's start(); restart to apply.
+        // If the user isn't on the Local backend, switching also activates it
+        // so the change is immediately testable.
+        if STTBackend.current == .local {
+            restartApplication(afterSwitchingTo: .local)
+        } else {
+            switchBackend(to: .local)
+        }
     }
 
     private func switchBackend(to backend: STTBackend) {

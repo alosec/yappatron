@@ -14,7 +14,7 @@ final class EnrollmentRecorder {
 
     static let defaultDuration: TimeInterval = 10.0
 
-    func record(for duration: TimeInterval = defaultDuration) async throws -> [Float] {
+    func record(for duration: TimeInterval = 10.0) async throws -> [Float] {
         let granted = await Self.requestMicrophonePermission()
         guard granted else { throw RecordingError.microphoneDenied }
 

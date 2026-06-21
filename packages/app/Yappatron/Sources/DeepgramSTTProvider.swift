@@ -24,6 +24,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
     private var currentRunTimings: [(startSec: Double, endSec: Double)] = []
     private var eouTimer: Task<Void, Never>?
     private var finalizeContinuation: CheckedContinuation<String?, Never>?
+    private let finalizeLock = NSLock()
     private var finalizeTimeoutTask: Task<Void, Never>?
     private var lastLocalSpeechAt = Date.distantPast
     private let eouDebounceMs: UInt64 = 1800
@@ -141,8 +142,12 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         eouTimer = nil
 
         return await withCheckedContinuation { continuation in
-            finalizeContinuation?.resume(returning: takePendingUtterance())
-            finalizeContinuation = continuation
+            let previousContinuation = finalizeLock.withLock {
+                let previous = finalizeContinuation
+                finalizeContinuation = continuation
+                return previous
+            }
+            previousContinuation?.resume(returning: takePendingUtterance())
 
             finalizeTimeoutTask?.cancel()
             finalizeTimeoutTask = Task { [weak self] in
@@ -185,8 +190,12 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         eouTimer = nil
         finalizeTimeoutTask?.cancel()
         finalizeTimeoutTask = nil
-        finalizeContinuation?.resume(returning: nil)
-        finalizeContinuation = nil
+        let continuation = finalizeLock.withLock {
+            let current = finalizeContinuation
+            finalizeContinuation = nil
+            return current
+        }
+        continuation?.resume(returning: nil)
     }
 
     func cleanup() {
@@ -195,8 +204,12 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         keepAliveTask?.cancel()
         eouTimer?.cancel()
         finalizeTimeoutTask?.cancel()
-        finalizeContinuation?.resume(returning: nil)
-        finalizeContinuation = nil
+        let continuation = finalizeLock.withLock {
+            let current = finalizeContinuation
+            finalizeContinuation = nil
+            return current
+        }
+        continuation?.resume(returning: nil)
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         session?.invalidateAndCancel()
@@ -288,7 +301,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         let speechFinal = json["speech_final"] as? Bool ?? false
 
         if transcript.isEmpty {
-            if fromFinalize || finalizeContinuation != nil {
+            if fromFinalize || hasFinalizeContinuation {
                 completeFinalize()
             } else if speechFinal {
                 scheduleEOUTimer(reason: "speech_final grace", delayMs: speechFinalGraceMs)
@@ -318,7 +331,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
                 self?.onPartial?(partial)
             }
 
-            if fromFinalize || finalizeContinuation != nil {
+            if fromFinalize || hasFinalizeContinuation {
                 completeFinalize()
             } else if speechFinal {
                 scheduleEOUTimer(reason: "speech_final grace", delayMs: speechFinalGraceMs)
@@ -369,7 +382,7 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         eouTimer = nil
 
         log("DeepgramSTTProvider: \(reason): '\(utterance)' (\(runs.count) speaker runs)")
-        if finalizeContinuation != nil {
+        if hasFinalizeContinuation {
             completeFinalize(with: utterance)
             return
         }
@@ -453,8 +466,12 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
         finalizeTimeoutTask?.cancel()
         finalizeTimeoutTask = nil
 
-        guard let continuation = finalizeContinuation else { return }
-        finalizeContinuation = nil
+        let continuation = finalizeLock.withLock {
+            let current = finalizeContinuation
+            finalizeContinuation = nil
+            return current
+        }
+        guard let continuation else { return }
 
         if let utterance = utterance {
             lastInterimText = ""
@@ -466,33 +483,48 @@ class DeepgramSTTProvider: STTProvider, @unchecked Sendable {
             continuation.resume(returning: takePendingUtterance())
         }
     }
+
+    private var hasFinalizeContinuation: Bool {
+        finalizeLock.withLock {
+            finalizeContinuation != nil
+        }
+    }
 }
 
 // MARK: - WebSocket Delegate
 
 private class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate {
     private var openContinuation: CheckedContinuation<Bool, Never>?
+    private let lock = NSLock()
     var lastError: String?
 
     func waitForOpen(timeout: TimeInterval) async -> Bool {
         return await withCheckedContinuation { continuation in
-            self.openContinuation = continuation
+            lock.withLock {
+                self.openContinuation = continuation
+            }
 
             // Timeout fallback
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
-                if let cont = self?.openContinuation {
+                let cont = self?.lock.withLock { () -> CheckedContinuation<Bool, Never>? in
+                    guard let cont = self?.openContinuation else { return nil }
                     self?.openContinuation = nil
                     self?.lastError = "Connection timed out after \(timeout)s"
-                    cont.resume(returning: false)
+                    return cont
                 }
+                cont?.resume(returning: false)
             }
         }
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
         log("DeepgramSTTProvider: WebSocket didOpen")
-        openContinuation?.resume(returning: true)
-        openContinuation = nil
+        let continuation = lock.withLock {
+            let current = openContinuation
+            openContinuation = nil
+            return current
+        }
+        continuation?.resume(returning: true)
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
@@ -522,8 +554,12 @@ private class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate {
                 log("DeepgramSTTProvider: Failing URL: \(data)")
             }
 
-            openContinuation?.resume(returning: false)
-            openContinuation = nil
+            let continuation = lock.withLock {
+                let current = openContinuation
+                openContinuation = nil
+                return current
+            }
+            continuation?.resume(returning: false)
         }
     }
 }

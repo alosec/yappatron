@@ -71,6 +71,14 @@ enum STTBackend: String, CaseIterable {
         }
     }
 
+    /// Whether this backend can emit speaker-attributed final utterances.
+    var supportsSpeakerLabels: Bool {
+        switch self {
+        case .local: return false
+        case .deepgram, .openAIRealtime: return true
+        }
+    }
+
     /// Whether this backend needs a user-provided cloud API key
     var requiresAPIKey: Bool {
         switch self {

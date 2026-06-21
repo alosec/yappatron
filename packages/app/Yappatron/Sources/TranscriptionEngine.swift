@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import Combine
 import Accelerate
+import CoreML
 
 // Simple print-based logging for debugging
 func log(_ message: String) {
@@ -13,10 +14,15 @@ func log(_ message: String) {
 
 /// Thread-safe audio buffer queue using Swift actor
 actor AudioBufferQueue {
-    private var buffers: [AVAudioPCMBuffer] = []
+    struct QueuedBuffer {
+        let buffer: AVAudioPCMBuffer
+        let generation: UInt64
+    }
+
+    private var buffers: [QueuedBuffer] = []
     private let maxSize = 100 // Prevent unbounded growth
 
-    func enqueue(_ buffer: AVAudioPCMBuffer) {
+    func enqueue(_ buffer: AVAudioPCMBuffer, generation: UInt64) {
         // Copy buffer data to prevent race conditions
         guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameCapacity) else {
             return
@@ -32,15 +38,15 @@ actor AudioBufferQueue {
         }
 
         if buffers.count < maxSize {
-            buffers.append(copy)
+            buffers.append(QueuedBuffer(buffer: copy, generation: generation))
         } else {
             // Drop oldest buffer if queue is full (prevents memory buildup)
             buffers.removeFirst()
-            buffers.append(copy)
+            buffers.append(QueuedBuffer(buffer: copy, generation: generation))
         }
     }
 
-    func dequeue() -> AVAudioPCMBuffer? {
+    func dequeue() -> QueuedBuffer? {
         guard !buffers.isEmpty else { return nil }
         return buffers.removeFirst()
     }
@@ -207,6 +213,7 @@ class TranscriptionEngine: ObservableObject {
 
     // Audio capture (pluggable: MicAudioSource, SystemAudioSource, or MixedAudioSource)
     private var audioCaptureSource: AudioCaptureSource?
+    private let captureGate = CaptureGate()
 
     // Track current partial for diffing
     private var currentPartial: String = ""
@@ -238,9 +245,12 @@ class TranscriptionEngine: ObservableObject {
 
     // Audio chunk buffer for batch re-processing (will be initialized after audio format is known)
     private var audioChunkBuffer: AudioChunkBuffer?
+    private let assistantSpeechStateClient = AssistantSpeechStateClient()
     private var isFinishingUtterance = false
     private var smoothedAudioLevel = 0.0
     private var lastAudioLevelPublishAt = Date.distantPast
+    private var assistantSpeechAudioSuppressedUntil = Date.distantPast
+    private var lastAssistantSpeechGateLogAt = Date.distantPast
 
     init(backend: STTBackend = .current) {
         self.backend = backend
@@ -421,7 +431,7 @@ class TranscriptionEngine: ObservableObject {
         }
 
         guard !labels.isEmpty else { return "" }
-        let speakerLine = "\n[\(labels.joined(separator: " -> "))]"
+        let speakerLine = " [\(labels.joined(separator: " -> "))]"
         let willSubmitUtterance = UserDefaults.standard.bool(forKey: "pressEnterAfterSpeech")
         return willSubmitUtterance ? speakerLine : "\(speakerLine)\n\n"
     }
@@ -498,13 +508,17 @@ class TranscriptionEngine: ObservableObject {
 
             // Reset the provider for next utterance
             await sttProvider?.reset()
+            await streamAudioBuffer.reset()
+            self.didAnchorStreamBuffer = false
         }
     }
 
     func startCapture() {
         switch status {
-        case .ready, .listening:
+        case .ready:
             break
+        case .listening:
+            return
         default:
             log("Cannot start listening - status is \(String(describing: self.status))")
             return
@@ -513,18 +527,26 @@ class TranscriptionEngine: ObservableObject {
         // The AudioCaptureSource is already running from setupAudioCapture(),
         // since SCStream / AVAudioEngine both want to be started once and
         // outlive the listening on/off toggle. We just flip status here.
+        captureGate.open()
+        didAnchorStreamBuffer = false
         status = .listening
         log("Listening started")
     }
 
-    func stopCapture() {
-        // Hard stop the source; will be re-created on next start cycle.
-        audioCaptureSource?.stop()
-        audioCaptureSource = nil
+    func stopCapture(releaseAudioSource: Bool = false) {
+        // Keep the source warm for normal listen/idle toggles. PTT needs this:
+        // a release should stop accepting new audio without tearing down the
+        // mic pipeline, so the next press can immediately resume capture.
+        captureGate.close(invalidateQueuedAudio: releaseAudioSource)
         status = .ready
-        didAnchorStreamBuffer = false
         resetAudioLevel()
-        Task { await streamAudioBuffer.reset() }
+
+        if releaseAudioSource {
+            audioCaptureSource?.stop()
+            audioCaptureSource = nil
+            Task { await audioBufferQueue.clear() }
+        }
+
         log("Listening stopped")
     }
 
@@ -543,6 +565,8 @@ class TranscriptionEngine: ObservableObject {
         } else {
             await audioChunkBuffer?.clear()
             await provider.reset()
+            await streamAudioBuffer.reset()
+            didAnchorStreamBuffer = false
 
             if isSpeaking {
                 DispatchQueue.main.async { [weak self] in
@@ -613,14 +637,18 @@ class TranscriptionEngine: ObservableObject {
         if audioChunkCount % 50 == 0 {
             log("Audio chunk #\(audioChunkCount), frames: \(buffer.frameLength)")
         }
-        updateAudioLevel(from: buffer)
+        let gate = captureGate.snapshot()
+        updateAudioLevel(from: buffer, isCaptureActive: gate.isListening)
+        guard gate.isListening else { return }
         Task {
-            await audioBufferQueue.enqueue(buffer)
+            await audioBufferQueue.enqueue(buffer, generation: gate.generation)
         }
     }
 
-    private func updateAudioLevel(from buffer: AVAudioPCMBuffer) {
-        let targetLevel = status == .listening ? measuredAudioLevel(from: buffer) : 0
+    private func updateAudioLevel(from buffer: AVAudioPCMBuffer, isCaptureActive: Bool) {
+        let targetLevel = isCaptureActive && Date() >= assistantSpeechAudioSuppressedUntil
+            ? measuredAudioLevel(from: buffer)
+            : 0
         let coefficient = targetLevel > smoothedAudioLevel ? 0.45 : 0.18
         smoothedAudioLevel += (targetLevel - smoothedAudioLevel) * coefficient
 
@@ -638,6 +666,21 @@ class TranscriptionEngine: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.onAudioLevel?(level)
         }
+    }
+
+    private func webhookOutputURLForAssistantSpeechGate() -> String {
+        let stored = UserDefaults.standard.string(forKey: "webhookOutputURL") ?? ""
+        let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "http://127.0.0.1:3002/input/yappatron" : trimmed
+    }
+
+    private func noteAssistantSpeechGateHold(_ decision: AssistantSpeechCaptureDecision) {
+        assistantSpeechAudioSuppressedUntil = Date().addingTimeInterval(0.25)
+
+        let now = Date()
+        guard now.timeIntervalSince(lastAssistantSpeechGateLogAt) >= 1.0 else { return }
+        lastAssistantSpeechGateLogAt = now
+        log("Assistant speech capture gate held audio before STT (\(decision.phase.rawValue), level=\(String(format: "%.2f", decision.audioLevel)))")
     }
 
     private func measuredAudioLevel(from buffer: AVAudioPCMBuffer) -> Double {
@@ -676,10 +719,28 @@ class TranscriptionEngine: ObservableObject {
 
             while !Task.isCancelled {
                 // Dequeue and process buffers serially
-                if let buffer = await self.audioBufferQueue.dequeue() {
+                if let queued = await self.audioBufferQueue.dequeue() {
                     await self.audioProcessingState.beginBuffer()
 
                     do {
+                        guard self.captureGate.shouldProcess(generation: queued.generation) else {
+                            await self.audioProcessingState.finishBuffer()
+                            continue
+                        }
+
+                        let buffer = queued.buffer
+                        let gateDecision = await self.assistantSpeechStateClient.captureDecision(
+                            audioLevel: self.measuredAudioLevel(from: buffer),
+                            webhookOutputEnabled: UserDefaults.standard.bool(forKey: "webhookOutputEnabled"),
+                            webhookOutputURL: self.webhookOutputURLForAssistantSpeechGate()
+                        )
+
+                        if !gateDecision.sendToSTT {
+                            self.noteAssistantSpeechGateHold(gateDecision)
+                            await self.audioProcessingState.finishBuffer()
+                            continue
+                        }
+
                         try await self.sttProvider?.processAudio(buffer)
 
                         // FIX: Always save audio chunks for batch refinement (unconditional)
@@ -738,7 +799,7 @@ class TranscriptionEngine: ObservableObject {
     }
 
     func cleanup() {
-        stopCapture()
+        stopCapture(releaseAudioSource: true)
         stopAudioProcessing()
         sttProvider?.cleanup()
         sttProvider = nil

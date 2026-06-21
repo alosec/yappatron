@@ -8,7 +8,7 @@ Yappatron is a voice dictation app that:
 
 - **🎙️ Streams in real-time** — Characters appear as you speak with cloud or local STT
 - **☁️ Cloud STT** — OpenAI Realtime (`gpt-realtime-whisper`) and Deepgram Nova-3
-- **🏠 Local STT** — Optional macOS 14+ build mode via Nemotron (Neural Engine, nothing leaves your machine)
+- **🏠 Local STT** — Optional macOS 14+ build mode via Nemotron/Qwen3 (Neural Engine, nothing leaves your machine)
 - **🎨 Beautiful visualizations** — Psychedelic orb animations respond to your voice
 - **⚡ Hands-free operation** — Optional auto-send for AI assistants and command-line tools
 - **🎙️ Dictation modes** — Always-on listening by default, with configurable push-to-talk for noisy spaces
@@ -51,7 +51,7 @@ cd yappatron
 - **5.26% WER**: Best-in-class accuracy
 - **$200 free credit**: Months of free use on signup
 
-### Local STT (Nemotron)
+### Local STT (Nemotron/Qwen3)
 - **Nemotron Speech Streaming 0.6B**: Fast streaming ASR with inline punctuation & capitalization
 - **Silero VAD gating**: Neural voice-activity detection so silence/noise never reaches the model (no hallucinated phantoms)
 - **100% on-device**: Runs on the Neural Engine, nothing leaves your machine

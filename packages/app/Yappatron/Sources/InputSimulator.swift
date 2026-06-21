@@ -4,7 +4,6 @@ import Carbon.HIToolbox
 
 /// Simulates keyboard input for append-only dictation output.
 class InputSimulator {
-
     private struct FocusedElementContext {
         let lookupResult: AXError
         let element: AXUIElement?
@@ -15,38 +14,6 @@ class InputSimulator {
         var isStandardTextInput: Bool {
             guard let role else { return false }
             return standardTextInputRoles.contains(role)
-        }
-    }
-
-    private struct PasteboardSnapshot {
-        let items: [[NSPasteboard.PasteboardType: Data]]
-
-        init(pasteboard: NSPasteboard) {
-            items = pasteboard.pasteboardItems?.map { item in
-                var dataByType: [NSPasteboard.PasteboardType: Data] = [:]
-                for type in item.types {
-                    if let data = item.data(forType: type) {
-                        dataByType[type] = data
-                    }
-                }
-                return dataByType
-            } ?? []
-        }
-
-        func restore(to pasteboard: NSPasteboard) {
-            pasteboard.clearContents()
-
-            let pasteboardItems = items.map { dataByType in
-                let item = NSPasteboardItem()
-                for (type, data) in dataByType {
-                    item.setData(data, forType: type)
-                }
-                return item
-            }
-
-            if !pasteboardItems.isEmpty {
-                pasteboard.writeObjects(pasteboardItems)
-            }
         }
     }
 
@@ -199,42 +166,31 @@ class InputSimulator {
         keyUp?.post(tap: .cghidEventTap)
     }
     
-    /// Type a string character by character
+    /// Type a string character by character.
+    ///
+    /// Dictation output is always synthesized as keystrokes — the clipboard is
+    /// never touched. Newlines are posted as Return key presses so multi-line
+    /// text still lands correctly.
     func typeString(_ string: String) {
-        if string.contains(where: { $0 == "\n" || $0 == "\r" }) || Self.shouldPasteTextInsteadOfTyping() {
-            pasteString(string)
-            return
-        }
-
         for char in string {
-            typeChar(char)
+            if char == "\n" || char == "\r" {
+                pressEnter()
+            } else {
+                typeChar(char)
+            }
             Thread.sleep(forTimeInterval: 0.002) // Small delay for reliability
         }
     }
 
-    /// Paste a string while preserving the user's existing pasteboard contents.
-    func pasteString(_ string: String) {
-        let pasteboard = NSPasteboard.general
-        let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
-
-        pasteboard.clearContents()
-        pasteboard.setString(string, forType: .string)
-
-        pressKey(0x09, modifiers: .maskCommand) // Cmd+V
-        Thread.sleep(forTimeInterval: 0.15)
-
-        snapshot.restore(to: pasteboard)
-    }
-    
     /// Press Enter/Return key
     func pressEnter() {
         let source = CGEventSource(stateID: .hidSystemState)
-        
+
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(0x24), keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(0x24), keyDown: false)
         keyDown?.flags = []
         keyUp?.flags = []
-        
+
         keyDown?.post(tap: .cghidEventTap)
         keyUp?.post(tap: .cghidEventTap)
     }
@@ -273,7 +229,12 @@ class InputSimulator {
         "AXSearchField"
     ]
 
-    private static let pasteFallbackBundleIDs: Set<String> = [
+    /// Apps that expose canvas/web/HTML surfaces instead of standard AX text
+    /// roles, so `focusedElementContext().isStandardTextInput` returns false
+    /// even when a real editable field is focused. We still type into them —
+    /// via synthesized keystrokes — so they're treated as valid destinations.
+    /// (This list used to drive a clipboard-paste fallback; that is gone.)
+    private static let unreliableAXTextRoleBundleIDs: Set<String> = [
         // Code editors and terminals often expose canvas/web surfaces rather than AX text roles.
         "com.microsoft.VSCode",
         "com.microsoft.VSCodeInsiders",
@@ -289,22 +250,14 @@ class InputSimulator {
         "com.anthropic.claudefordesktop",
         "org.whispersystems.signal-desktop"
     ]
-    
+
     static func isTextInputFocused() -> Bool {
         let context = focusedElementContext()
         if context.isStandardTextInput {
             return true
         }
 
-        return frontmostAppUsesPasteFallback()
-    }
-
-    static func shouldPasteTextInsteadOfTyping() -> Bool {
-        guard frontmostAppUsesPasteFallback() else {
-            return false
-        }
-
-        return !focusedElementContext().isStandardTextInput
+        return frontmostAppHasUnreliableAXTextRole()
     }
 
     static func getFocusedAppName() -> String? {
@@ -314,7 +267,7 @@ class InputSimulator {
     static func captureFocusedTextInputTarget() -> InputFocusTarget? {
         let context = focusedElementContext()
         guard let element = context.element,
-              context.isStandardTextInput || frontmostAppUsesPasteFallback(),
+              context.isStandardTextInput || frontmostAppHasUnreliableAXTextRole(),
               let app = NSWorkspace.shared.frontmostApplication else {
             return nil
         }
@@ -360,6 +313,10 @@ class InputSimulator {
         )
         
         guard result == .success, let element = focusedElement else {
+            return FocusedElementContext(lookupResult: result, element: nil, window: nil, role: nil, subrole: nil)
+        }
+
+        guard CFGetTypeID(element) == AXUIElementGetTypeID() else {
             return FocusedElementContext(lookupResult: result, element: nil, window: nil, role: nil, subrole: nil)
         }
 
@@ -473,13 +430,13 @@ class InputSimulator {
         }
     }
 
-    private static func frontmostAppUsesPasteFallback() -> Bool {
+    private static func frontmostAppHasUnreliableAXTextRole() -> Bool {
         guard let app = NSWorkspace.shared.frontmostApplication,
               let bundleID = app.bundleIdentifier else {
             return false
         }
 
-        return pasteFallbackBundleIDs.contains(bundleID)
+        return unreliableAXTextRoleBundleIDs.contains(bundleID)
     }
 }
 
