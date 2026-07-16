@@ -4,25 +4,33 @@
 
 ## SAG speaker-feedback guard and barge-in (2026-07-12)
 
-Shipped the first local feedback guard in commit `a5fceaf`. Yappatron now
-recognizes a running `sag` process without requiring webhook mode, holds its
-microphone buffers before cloud STT for the lifetime of SAG playback, and keeps
-a short post-playback phase. The implementation uses macOS `libproc` directly,
-so it does not need a wrapper script, network service, or recurring shell
-subprocess.
+Shipped across commits `a5fceaf`, `434b1f7`, and `b5e356a`.
 
-Validation completed against the installed `/Applications/Yappatron.app`:
-release build and signing passed, exactly one app process was relaunched, a
-synthetic process named `sag` produced active/cooldown hold logs, and repeated
-live ElevenLabs playback did not feed back into dictation. Live QA also found
-that the initial 1.6-second cooldown suppresses speech for too long after SAG
-exits.
+- Yappatron detects the local `sag` process through macOS `libproc`; no wrapper,
+  network service, or recurring shell subprocess is required.
+- Mic capture now uses macOS Voice Processing I/O for hardware acoustic echo
+  cancellation. The Mac exposes its processed stream as 48kHz/9-channel audio,
+  so Yappatron explicitly takes the processed first channel before persistent
+  16kHz resampling; generic 9-to-1 conversion produced silence during the first
+  prototype.
+- Voice processing uses the minimum available output ducking. Default ducking
+  made SAG impractically quiet; minimum ducking was live-tested as acceptable.
+- While SAG is active, low-level echo residual stays out of STT. A sustained
+  near-field voice triggers barge-in, terminates SAG and its playback children,
+  and passes the user's speech through.
+- A rolling 300ms echo-cancelled pre-roll is replayed when barge-in fires so the
+  first interrupted word is retained. This fixed the first-word clipping seen
+  in the initial interruption prototype.
+- Systems where Voice Processing I/O is unavailable retain the process-based
+  hard gate with a 250ms tail instead of the original 1.6-second cooldown.
 
-Active next slice: shorten the hard tail and add real barge-in/interruption.
-Audio level alone is not sufficient because loud speaker playback looks like a
-barge-in candidate. Prefer an approach that uses the known SAG playback/process
-state plus echo discrimination, while retaining a final transcript-similarity
-fallback. Preserve immediate return to listening after playback.
+Validation: debug and release builds passed; process detection and descendant
+termination passed synthetic checks; the capture decision passed deterministic
+hold/barge-in/continuation checks; the installed app reported active acoustic
+echo cancellation and stable 1600-frame/16kHz output; ordinary transcription,
+playback leak suppression, output volume, interruption, and first-word pre-roll
+were exercised live with repeated SAG playback. Alex accepted the final behavior
+as good enough. Exactly one `/Applications/Yappatron.app` process was running.
 
 ## Local STT rewrite: Nemotron 0.6B + Silero VAD (2026-05-29, evening)
 
