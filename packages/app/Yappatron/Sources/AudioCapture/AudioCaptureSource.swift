@@ -13,4 +13,12 @@ protocol AudioCaptureSource: AnyObject {
     func stop()
 
     var isRunning: Bool { get }
+
+    /// True when captured mic audio has hardware-backed acoustic echo
+    /// cancellation applied to audio playing from the Mac's output device.
+    var acousticEchoCancellationEnabled: Bool { get }
+}
+
+extension AudioCaptureSource {
+    var acousticEchoCancellationEnabled: Bool { false }
 }

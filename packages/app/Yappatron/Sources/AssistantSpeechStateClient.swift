@@ -8,16 +8,42 @@ enum AssistantSpeechCapturePhase: String {
 
 struct AssistantSpeechCaptureDecision {
     let sendToSTT: Bool
+    let interruptLocalPlayback: Bool
+    let retainForLocalBargeIn: Bool
     let phase: AssistantSpeechCapturePhase
     let audioLevel: Double
     let reason: String?
 
-    static func send(phase: AssistantSpeechCapturePhase = .idle, audioLevel: Double, reason: String? = nil) -> AssistantSpeechCaptureDecision {
-        AssistantSpeechCaptureDecision(sendToSTT: true, phase: phase, audioLevel: audioLevel, reason: reason)
+    static func send(
+        phase: AssistantSpeechCapturePhase = .idle,
+        audioLevel: Double,
+        reason: String? = nil,
+        interruptLocalPlayback: Bool = false
+    ) -> AssistantSpeechCaptureDecision {
+        AssistantSpeechCaptureDecision(
+            sendToSTT: true,
+            interruptLocalPlayback: interruptLocalPlayback,
+            retainForLocalBargeIn: false,
+            phase: phase,
+            audioLevel: audioLevel,
+            reason: reason
+        )
     }
 
-    static func hold(phase: AssistantSpeechCapturePhase, audioLevel: Double, reason: String) -> AssistantSpeechCaptureDecision {
-        AssistantSpeechCaptureDecision(sendToSTT: false, phase: phase, audioLevel: audioLevel, reason: reason)
+    static func hold(
+        phase: AssistantSpeechCapturePhase,
+        audioLevel: Double,
+        reason: String,
+        retainForLocalBargeIn: Bool = false
+    ) -> AssistantSpeechCaptureDecision {
+        AssistantSpeechCaptureDecision(
+            sendToSTT: false,
+            interruptLocalPlayback: false,
+            retainForLocalBargeIn: retainForLocalBargeIn,
+            phase: phase,
+            audioLevel: audioLevel,
+            reason: reason
+        )
     }
 }
 
@@ -36,6 +62,8 @@ actor AssistantSpeechStateClient {
     private var localSpeechIsActive = false
     private var localSpeechCooldownUntil = Date.distantPast
     private var nextLocalSpeechPollAt = Date.distantPast
+    private var localBargeInStartedAt: Date?
+    private var localBargeInTriggered = false
 
     private var cachedPhase: AssistantSpeechCapturePhase = .idle
     private var cachedActiveUntil: Date?
@@ -49,6 +77,8 @@ actor AssistantSpeechStateClient {
 
     private let localSpeechPollInterval: TimeInterval = 0.10
     private let localSpeechCooldown: TimeInterval = 0.25
+    private let localBargeInLevel = 0.12
+    private let localBargeInSustain: TimeInterval = 0.12
     private let pollInterval: TimeInterval = 0.15
     private let failureBackoff: TimeInterval = 1.0
     private let activeBargeInLevel = 0.82
@@ -64,17 +94,52 @@ actor AssistantSpeechStateClient {
         audioLevel: Double,
         webhookOutputEnabled: Bool,
         webhookOutputURL: String,
+        acousticEchoCancellationEnabled: Bool = false,
         now: Date = Date()
     ) async -> AssistantSpeechCaptureDecision {
         let localPhase = localSpeechPhase(now: now)
         if localPhase != .idle {
             resetBargeIn()
+
+            if acousticEchoCancellationEnabled {
+                // Voice Processing I/O can leak a brief playback transient while
+                // its echo model converges. Keep low-level residual audio away
+                // from STT, but monitor it for a sustained near-field voice.
+                // Once detected, interrupt SAG and pass the user's speech through.
+                if localPhase == .active, !localBargeInTriggered {
+                    let shouldInterrupt = shouldInterruptLocalPlayback(audioLevel: audioLevel, now: now)
+                    if shouldInterrupt {
+                        return .send(
+                            phase: localPhase,
+                            audioLevel: audioLevel,
+                            reason: "voice barge-in during local sag playback",
+                            interruptLocalPlayback: true
+                        )
+                    }
+                    return .hold(
+                        phase: localPhase,
+                        audioLevel: audioLevel,
+                        reason: "waiting for echo-cancelled voice barge-in",
+                        retainForLocalBargeIn: true
+                    )
+                }
+
+                return .send(
+                    phase: localPhase,
+                    audioLevel: audioLevel,
+                    reason: "echo-cancelled barge-in continuation"
+                )
+            }
+
+            resetLocalBargeIn()
             return .hold(
                 phase: localPhase,
                 audioLevel: audioLevel,
                 reason: "local sag playback \(localPhase.rawValue)"
             )
         }
+
+        resetLocalBargeIn()
 
         guard webhookOutputEnabled, let endpoint = stateURL(from: webhookOutputURL) else {
             resetGate()
@@ -117,6 +182,32 @@ actor AssistantSpeechStateClient {
             return .cooldown
         }
         return .idle
+    }
+
+    private func shouldInterruptLocalPlayback(audioLevel rawLevel: Double, now: Date) -> Bool {
+        guard !localBargeInTriggered else { return false }
+        let audioLevel = rawLevel.isFinite ? max(0, rawLevel) : 0
+
+        if audioLevel >= localBargeInLevel {
+            if localBargeInStartedAt == nil {
+                localBargeInStartedAt = now
+            }
+            if let startedAt = localBargeInStartedAt,
+               now.timeIntervalSince(startedAt) >= localBargeInSustain {
+                localBargeInStartedAt = nil
+                localBargeInTriggered = true
+                return true
+            }
+        } else if audioLevel < localBargeInLevel * 0.65 {
+            localBargeInStartedAt = nil
+        }
+
+        return false
+    }
+
+    private func resetLocalBargeIn() {
+        localBargeInStartedAt = nil
+        localBargeInTriggered = false
     }
 
     private func refreshIfNeeded(endpoint: URL, now: Date) async {

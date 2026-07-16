@@ -251,6 +251,9 @@ class TranscriptionEngine: ObservableObject {
     private var lastAudioLevelPublishAt = Date.distantPast
     private var assistantSpeechAudioSuppressedUntil = Date.distantPast
     private var lastAssistantSpeechGateLogAt = Date.distantPast
+    private var localBargeInPreroll: [AVAudioPCMBuffer] = []
+    private var localBargeInPrerollFrames = 0
+    private let maxLocalBargeInPrerollFrames = 4_800 // 300ms at 16kHz
 
     init(backend: STTBackend = .current) {
         self.backend = backend
@@ -683,6 +686,28 @@ class TranscriptionEngine: ObservableObject {
         log("Assistant speech capture gate held audio before STT (\(decision.phase.rawValue), level=\(String(format: "%.2f", decision.audioLevel)))")
     }
 
+    private func retainLocalBargeInPreroll(_ buffer: AVAudioPCMBuffer) {
+        localBargeInPreroll.append(buffer)
+        localBargeInPrerollFrames += Int(buffer.frameLength)
+
+        while localBargeInPrerollFrames > maxLocalBargeInPrerollFrames,
+              let oldest = localBargeInPreroll.first {
+            localBargeInPreroll.removeFirst()
+            localBargeInPrerollFrames -= Int(oldest.frameLength)
+        }
+    }
+
+    private func takeLocalBargeInPreroll() -> [AVAudioPCMBuffer] {
+        let buffers = localBargeInPreroll
+        clearLocalBargeInPreroll()
+        return buffers
+    }
+
+    private func clearLocalBargeInPreroll() {
+        localBargeInPreroll.removeAll(keepingCapacity: true)
+        localBargeInPrerollFrames = 0
+    }
+
     private func measuredAudioLevel(from buffer: AVAudioPCMBuffer) -> Double {
         guard let channelData = buffer.floatChannelData else { return 0 }
         let frameLength = Int(buffer.frameLength)
@@ -732,30 +757,51 @@ class TranscriptionEngine: ObservableObject {
                         let gateDecision = await self.assistantSpeechStateClient.captureDecision(
                             audioLevel: self.measuredAudioLevel(from: buffer),
                             webhookOutputEnabled: UserDefaults.standard.bool(forKey: "webhookOutputEnabled"),
-                            webhookOutputURL: self.webhookOutputURLForAssistantSpeechGate()
+                            webhookOutputURL: self.webhookOutputURLForAssistantSpeechGate(),
+                            acousticEchoCancellationEnabled: self.audioCaptureSource?.acousticEchoCancellationEnabled == true
                         )
 
+                        if gateDecision.interruptLocalPlayback,
+                           LocalAssistantSpeechMonitor.interruptAssistantSpeechIfRunning() {
+                            log("Local assistant speech interrupted by echo-cancelled voice barge-in")
+                        }
+
                         if !gateDecision.sendToSTT {
+                            if gateDecision.retainForLocalBargeIn {
+                                self.retainLocalBargeInPreroll(buffer)
+                            } else {
+                                self.clearLocalBargeInPreroll()
+                            }
                             self.noteAssistantSpeechGateHold(gateDecision)
                             await self.audioProcessingState.finishBuffer()
                             continue
                         }
 
-                        try await self.sttProvider?.processAudio(buffer)
-
-                        // FIX: Always save audio chunks for batch refinement (unconditional)
-                        // This ensures we capture the complete utterance from the beginning,
-                        // not just after isSpeaking flag is set (which happens after first partial arrives)
-                        await self.audioChunkBuffer?.append(buffer)
-
-                        // Anchor the stream buffer to Deepgram's t=0 (the moment the
-                        // first audio chunk was successfully sent). Then append.
-                        if !self.didAnchorStreamBuffer {
-                            self.didAnchorStreamBuffer = true
-                            await self.streamAudioBuffer.anchor()
-                            HybridDiagLog.shared.write("StreamAudioBuffer anchored — first audio sent to Deepgram")
+                        let buffersToProcess: [AVAudioPCMBuffer]
+                        if gateDecision.interruptLocalPlayback {
+                            let preroll = self.takeLocalBargeInPreroll()
+                            buffersToProcess = preroll + [buffer]
+                            log("Replaying \(preroll.count) echo-cancelled pre-roll buffers for voice barge-in")
+                        } else {
+                            self.clearLocalBargeInPreroll()
+                            buffersToProcess = [buffer]
                         }
-                        await self.streamAudioBuffer.append(buffer)
+
+                        for candidate in buffersToProcess {
+                            try await self.sttProvider?.processAudio(candidate)
+
+                            // Always save audio chunks for optional batch refinement.
+                            await self.audioChunkBuffer?.append(candidate)
+
+                            // Anchor the stream buffer to the first audio actually
+                            // sent to STT, then preserve the same sequence there.
+                            if !self.didAnchorStreamBuffer {
+                                self.didAnchorStreamBuffer = true
+                                await self.streamAudioBuffer.anchor()
+                                HybridDiagLog.shared.write("StreamAudioBuffer anchored — first audio sent to Deepgram")
+                            }
+                            await self.streamAudioBuffer.append(candidate)
+                        }
                     } catch {
                         log("STT process error: \(error.localizedDescription)")
                     }
