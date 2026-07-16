@@ -1,6 +1,28 @@
 # Active Work
 
-**Last Updated:** 2026-05-29
+**Last Updated:** 2026-07-12
+
+## SAG speaker-feedback guard and barge-in (2026-07-12)
+
+Shipped the first local feedback guard in commit `a5fceaf`. Yappatron now
+recognizes a running `sag` process without requiring webhook mode, holds its
+microphone buffers before cloud STT for the lifetime of SAG playback, and keeps
+a short post-playback phase. The implementation uses macOS `libproc` directly,
+so it does not need a wrapper script, network service, or recurring shell
+subprocess.
+
+Validation completed against the installed `/Applications/Yappatron.app`:
+release build and signing passed, exactly one app process was relaunched, a
+synthetic process named `sag` produced active/cooldown hold logs, and repeated
+live ElevenLabs playback did not feed back into dictation. Live QA also found
+that the initial 1.6-second cooldown suppresses speech for too long after SAG
+exits.
+
+Active next slice: shorten the hard tail and add real barge-in/interruption.
+Audio level alone is not sufficient because loud speaker playback looks like a
+barge-in candidate. Prefer an approach that uses the known SAG playback/process
+state plus echo discrimination, while retaining a final transcript-similarity
+fallback. Preserve immediate return to listening after playback.
 
 ## Local STT rewrite: Nemotron 0.6B + Silero VAD (2026-05-29, evening)
 
