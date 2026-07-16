@@ -48,7 +48,7 @@ actor AssistantSpeechStateClient {
     private var bargeInOpenUntil = Date.distantPast
 
     private let localSpeechPollInterval: TimeInterval = 0.10
-    private let localSpeechCooldown: TimeInterval = 1.6
+    private let localSpeechCooldown: TimeInterval = 0.25
     private let pollInterval: TimeInterval = 0.15
     private let failureBackoff: TimeInterval = 1.0
     private let activeBargeInLevel = 0.82
