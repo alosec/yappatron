@@ -30,6 +30,13 @@ private struct AssistantSpeechRemoteState: Decodable {
 }
 
 actor AssistantSpeechStateClient {
+    typealias LocalSpeechProbe = () -> Bool
+
+    private let localSpeechProbe: LocalSpeechProbe
+    private var localSpeechIsActive = false
+    private var localSpeechCooldownUntil = Date.distantPast
+    private var nextLocalSpeechPollAt = Date.distantPast
+
     private var cachedPhase: AssistantSpeechCapturePhase = .idle
     private var cachedActiveUntil: Date?
     private var cachedCooldownUntil: Date?
@@ -40,6 +47,8 @@ actor AssistantSpeechStateClient {
     private var loudAudioStartedAt: Date?
     private var bargeInOpenUntil = Date.distantPast
 
+    private let localSpeechPollInterval: TimeInterval = 0.10
+    private let localSpeechCooldown: TimeInterval = 1.6
     private let pollInterval: TimeInterval = 0.15
     private let failureBackoff: TimeInterval = 1.0
     private let activeBargeInLevel = 0.82
@@ -47,12 +56,26 @@ actor AssistantSpeechStateClient {
     private let bargeInSustain: TimeInterval = 0.24
     private let bargeInOpenWindow: TimeInterval = 2.5
 
+    init(localSpeechProbe: @escaping LocalSpeechProbe = LocalAssistantSpeechMonitor.isAssistantSpeechProcessRunning) {
+        self.localSpeechProbe = localSpeechProbe
+    }
+
     func captureDecision(
         audioLevel: Double,
         webhookOutputEnabled: Bool,
         webhookOutputURL: String,
         now: Date = Date()
     ) async -> AssistantSpeechCaptureDecision {
+        let localPhase = localSpeechPhase(now: now)
+        if localPhase != .idle {
+            resetBargeIn()
+            return .hold(
+                phase: localPhase,
+                audioLevel: audioLevel,
+                reason: "local sag playback \(localPhase.rawValue)"
+            )
+        }
+
         guard webhookOutputEnabled, let endpoint = stateURL(from: webhookOutputURL) else {
             resetGate()
             return .send(audioLevel: audioLevel)
@@ -76,6 +99,24 @@ actor AssistantSpeechStateClient {
         }
 
         return .hold(phase: phase, audioLevel: audioLevel, reason: "assistant speech \(phase.rawValue)")
+    }
+
+    private func localSpeechPhase(now: Date) -> AssistantSpeechCapturePhase {
+        if now >= nextLocalSpeechPollAt {
+            nextLocalSpeechPollAt = now.addingTimeInterval(localSpeechPollInterval)
+            localSpeechIsActive = localSpeechProbe()
+            if localSpeechIsActive {
+                localSpeechCooldownUntil = now.addingTimeInterval(localSpeechCooldown)
+            }
+        }
+
+        if localSpeechIsActive {
+            return .active
+        }
+        if now < localSpeechCooldownUntil {
+            return .cooldown
+        }
+        return .idle
     }
 
     private func refreshIfNeeded(endpoint: URL, now: Date) async {
