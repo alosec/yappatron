@@ -1,6 +1,7 @@
 import SwiftUI
 import HotKey
 import Combine
+import CoreGraphics
 
 struct YappatronApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -40,6 +41,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var pushToTalkHotKey: HotKey?
     var pushToTalkLocalMonitor: Any?
     var pushToTalkGlobalMonitor: Any?
+    var pushToTalkValidationTimer: Timer?
 
     // State
     @Published var isPaused = false
@@ -184,6 +186,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         Task { @MainActor in
             focusObservationTimer?.invalidate()
             unregisterInputFocusLockShortcut()
+            unregisterPushToTalkInput()
             webhookOutbox.cancelAll()
             engine.cleanup()
         }
@@ -946,6 +949,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         guard dictationMode == .pushToTalk else { return }
 
+        startPushToTalkValidationTimer()
+
         let combo = HotKeyPreferences.pushToTalkCombo
 
         if HotKeyPreferences.isModifierOnly(combo) {
@@ -968,6 +973,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func unregisterPushToTalkInput() {
         pushToTalkHotKey = nil
+        stopPushToTalkValidationTimer()
 
         if let pushToTalkLocalMonitor = pushToTalkLocalMonitor {
             NSEvent.removeMonitor(pushToTalkLocalMonitor)
@@ -997,17 +1003,94 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func handlePushToTalkModifierEvent(_ event: NSEvent, combo: KeyCombo) {
         guard dictationMode == .pushToTalk,
-              let isPressed = HotKeyPreferences.modifierPressedState(for: event, combo: combo) else {
+              HotKeyPreferences.modifierPressedState(for: event, combo: combo) != nil else {
             return
         }
 
-        if isPressed {
+        if isPushToTalkShortcutCurrentlyPressed(combo: combo) {
             beginPushToTalkCapture()
         } else {
             Task {
                 await endPushToTalkCapture()
             }
         }
+    }
+
+    func startPushToTalkValidationTimer() {
+        guard pushToTalkValidationTimer == nil else { return }
+
+        let timer = Timer(timeInterval: 0.10, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.validatePushToTalkCaptureState()
+            }
+        }
+        pushToTalkValidationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func stopPushToTalkValidationTimer() {
+        pushToTalkValidationTimer?.invalidate()
+        pushToTalkValidationTimer = nil
+    }
+
+    func validatePushToTalkCaptureState() {
+        guard dictationMode == .pushToTalk else {
+            stopPushToTalkValidationTimer()
+            return
+        }
+
+        guard engine.status == .listening || isPushToTalkHeld else {
+            return
+        }
+
+        guard !isPaused else {
+            isPushToTalkHeld = false
+            engine.stopCapture()
+            updateOverlayStatus()
+            updateStatusIcon()
+            return
+        }
+
+        guard isPushToTalkShortcutCurrentlyPressed() else {
+            Task {
+                await endPushToTalkCapture(force: true)
+            }
+            return
+        }
+
+        if engine.status == .listening, !isPushToTalkHeld {
+            isPushToTalkHeld = true
+            updateOverlayStatus()
+            updateStatusIcon()
+        }
+    }
+
+    func isPushToTalkShortcutCurrentlyPressed(combo: KeyCombo = HotKeyPreferences.pushToTalkCombo) -> Bool {
+        guard combo.key != nil else { return false }
+
+        let keyIsDown = CGEventSource.keyState(.hidSystemState, key: CGKeyCode(combo.carbonKeyCode))
+        guard keyIsDown else { return false }
+
+        let flags = CGEventSource.flagsState(.hidSystemState)
+        let modifiers = combo.modifiers.intersection(.deviceIndependentFlagsMask)
+
+        if modifiers.contains(.command), !flags.contains(.maskCommand) {
+            return false
+        }
+
+        if modifiers.contains(.option), !flags.contains(.maskAlternate) {
+            return false
+        }
+
+        if modifiers.contains(.control), !flags.contains(.maskControl) {
+            return false
+        }
+
+        if modifiers.contains(.shift), !flags.contains(.maskShift) {
+            return false
+        }
+
+        return true
     }
 
     func applyDictationModeAfterEngineReady() {
@@ -1038,14 +1121,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         showOverlay()
     }
 
-    func endPushToTalkCapture() async {
-        guard dictationMode == .pushToTalk, isPushToTalkHeld, !isPushToTalkFinishing else { return }
+    func endPushToTalkCapture(force: Bool = false) async {
+        guard dictationMode == .pushToTalk, !isPushToTalkFinishing else { return }
+        guard isPushToTalkHeld || force || engine.status == .listening else { return }
 
         isPushToTalkHeld = false
         isPushToTalkFinishing = true
         defer { isPushToTalkFinishing = false }
 
-        engine.stopCapture()
+        if engine.status == .listening {
+            engine.stopCapture()
+        }
         updateOverlayStatus()
         updateStatusIcon()
 
@@ -1229,6 +1315,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Pause active transcription so the enrollment recorder owns the mic.
         let wasListening = engine.status == .listening
         if wasListening {
+            isPushToTalkHeld = false
+            isPushToTalkFinishing = false
             engine.stopCapture(releaseAudioSource: true)
         }
 
@@ -1250,10 +1338,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 alert.runModal()
 
                 if wasListening {
-                    self?.engine.startCapture()
+                    Task {
+                        await self?.resumeCaptureAfterTemporaryInterruption()
+                    }
                 }
             }
         }
+    }
+
+    func resumeCaptureAfterTemporaryInterruption() async {
+        guard !isPaused else {
+            updateOverlayStatus()
+            updateStatusIcon()
+            return
+        }
+
+        guard await engine.restoreAudioCaptureSourceIfNeeded() else {
+            updateOverlayStatus()
+            updateStatusIcon()
+            return
+        }
+
+        switch dictationMode {
+        case .alwaysOn:
+            engine.startCapture()
+        case .pushToTalk:
+            guard isPushToTalkShortcutCurrentlyPressed() else {
+                isPushToTalkHeld = false
+                engine.stopCapture()
+                updateOverlayStatus()
+                updateStatusIcon()
+                return
+            }
+
+            beginPushToTalkCapture()
+        }
+
+        updateOverlayStatus()
+        updateStatusIcon()
     }
 
     @objc func removeEnrolledSpeaker(_ sender: NSMenuItem) {

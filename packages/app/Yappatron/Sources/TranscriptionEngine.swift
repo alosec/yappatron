@@ -535,8 +535,8 @@ class TranscriptionEngine: ObservableObject {
 
     func stopCapture(releaseAudioSource: Bool = false) {
         // Keep the source warm for normal listen/idle toggles. PTT needs this:
-        // a release should stop accepting new audio without tearing down the
-        // mic pipeline, so the next press can immediately resume capture.
+        // idle should stop accepting new audio without tearing down the mic
+        // pipeline, so the next press can immediately resume capture.
         captureGate.close(invalidateQueuedAudio: releaseAudioSource)
         status = .ready
         resetAudioLevel()
@@ -548,6 +548,26 @@ class TranscriptionEngine: ObservableObject {
         }
 
         log("Listening stopped")
+    }
+
+    func restoreAudioCaptureSourceIfNeeded() async -> Bool {
+        if audioCaptureSource?.isRunning == true {
+            return true
+        }
+
+        do {
+            let processingFormat = try await setupAudioCapture()
+            if audioChunkBuffer == nil {
+                audioChunkBuffer = AudioChunkBuffer(format: processingFormat)
+            }
+            return true
+        } catch {
+            await MainActor.run {
+                status = .error(error.localizedDescription)
+            }
+            log("Failed to restore audio capture: \(error.localizedDescription)")
+            return false
+        }
     }
 
     func finishCurrentUtterance() async {
